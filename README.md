@@ -11,7 +11,7 @@ NEO runs entirely on your machine. Your words live in plain, readable files on y
 Grab the latest installer from the **[Releases page](../../releases)**:
 
 - **macOS** — download the `.dmg`, open it, drag NEO to Applications.
-- **Windows** — download the `.exe` installer and run it. (This version is not as tested!)
+- **Windows** — download the `.exe` installer and run it. (This version is not as tested!) Defender might eat this file, so add the folder to your exclusions or look in your threat history and get NEO.exe out of quarantine.
 
 ## What makes NEO different
 
