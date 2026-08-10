@@ -609,7 +609,14 @@ function wireChapterBody(body, chId) {
       });
     }
   });
+  // While macOS composes input (dead keys, dictation, some international
+  // layouts), our shortcuts stand down completely — intercepting mid-composition
+  // keystrokes is how phantom characters get born.
+  let composing = false;
+  body.addEventListener('compositionstart', () => { composing = true; });
+  body.addEventListener('compositionend', () => { composing = false; });
   body.addEventListener('keydown', (e) => {
+    if (composing || e.isComposing || e.keyCode === 229) return;
     if (handleEnter(e, body, chId)) return;
     smartKeys(e, body);
   });
@@ -717,6 +724,7 @@ function cleanPasteHtml(html) {
 // Em dash, ellipsis, smart quotes — without ever leaving the keyboard.
 function smartKeys(e, body) {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.isComposing || e.keyCode === 229) return;
 
   const sel = window.getSelection();
   if (!sel.rangeCount) return;

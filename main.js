@@ -632,6 +632,17 @@ function checkForUpdates() {
 }
 
 app.whenReady().then(() => {
+  // macOS press-and-hold accent picker can open invisibly inside Chromium
+  // and re-emit swallowed keys as phantom repeated letters. Within NEO,
+  // held keys simply repeat — which is what writers expect anyway.
+  if (process.platform === 'darwin') {
+    try {
+      const { systemPreferences } = require('electron');
+      systemPreferences.setUserDefault('ApplePressAndHoldEnabled', 'boolean', false);
+    } catch (err) {
+      logError('prefs', err);
+    }
+  }
   ensureLibrary();
   buildMenu();
   createWindow();
