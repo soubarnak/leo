@@ -1,6 +1,6 @@
 # Getting Started with NEO
 
-Warning! This tutorial a very rough draft!
+Warning! This tutorial is a very rough draft!
 
 **Installing**
 
