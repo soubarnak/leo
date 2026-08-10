@@ -1,73 +1,73 @@
 # Getting Started with NEO
 
-I've spent a decade dreaming about this word processor and about a day using it, so consider this tutorial a rough draft. Like all rough drafts, it doesn't have to be good; it just has to get you to the end. Ten minutes from now you'll know everything NEO does. That's kind of the point of NEO. There isn't much to learn, because the whole idea is a writing program that gets out of your way and lets you put words down.
-
-Let's go.
+Warning! This tutorial a very rough draft!
 
 **Installing**
 
-Mac: open the .dmg, drag NEO into Applications. PC: run the installer. The first time you launch on a Mac you might get a warning about an "unidentified developer" — right-click the app and choose Open. That's Apple asking for $99 a year, not a virus.
+Mac: open the .dmg, drag NEO into Applications. PC: run the installer. For PC, you might get a warning. I haven't tested the .exe version very much, so beware!
 
-NEO will ask you two things when it opens: your name (this goes on your title pages, and you can leave it blank and be Anonymous — very mysterious), and whether you're a **pantser or a plotter**. If you don't know the difference, you're a pantser. Pantsers write by the seat of their pants and figure the story out as they go. Plotters outline first. There's no wrong answer, and you can change it later, and honestly the difference in NEO is small: plotters get new books that open in the Outline tab, pantsers get a blank page. Then NEO asks you to pick a font and a drop cap style, shows you exactly what your page will look like, and never asks you anything again. I promise.
+NEO will ask you two things when it opens: your name (this goes on your title pages, and you can leave it blank and be Anonymous), and whether you're a **pantser or a plotter**. If you don't know the difference, pantsers write by the seat of their pants and figure our the story as they go. Plotters outline first. There's no wrong answer, and you can change it later. The difference in NEO is plotters have new books that open in the Outline tab, while pantsers get a blank page. Then NEO asks you to pick a font and a drop cap style, shows you exactly what your page will look like, and never asks you anything again. You can change these options later.
 
 **Your bookshelf**
 
-NEO opens on a bookshelf because you're a writer and writers make books, plural. Click the dashed rectangle with the + in it and you've started your first one. That's it. That's the tutorial for starting a book.
+NEO opens on a bookshelf because you're a novelist, and novelists write books. (Or short stories; I won't judge). Click the dashed rectangle with the + in it and you've started your first story. That's it. And guess what? It already looks like a book!
 
-You can add more shelves (button in the top corner), rename any shelf by clicking its label, and drag books around like you're rearranging a real bookshelf, because you are. Right-click a book to set a word count goal (this puts a subtle progress bar on the cover, which is more motivating than it has any right to be) or to remove the book. Every book gets its own generated cover; hover over one and click the little ↻ if you want a new one.
+You can add more shelves (button in the top right corner), rename any shelf by clicking its label, and drag books around like you're rearranging a real bookshelf. Right-click a book to set a word count goal (this puts a subtle progress bar on the cover. You have to write to see it!). You can also right-click to remove a book. Each book gets its own colored cover; hover over one and click the little ↻ refresh button if you want a new one.
 
-**Writing (this is the important part)**
+**Writing**
 
 Here's everything you need to know about writing in NEO:
 
 Type your title. Hit Enter. Start writing Chapter One.
 
-The first paragraph of every chapter gets a big drop cap, like a real book, because **you are writing a real book** and NEO wants you to feel that in your bones every time you start a chapter.
+The first paragraph of every chapter gets a big drop cap, like a real book, because **you are writing a real book** and NEO wants you to feel that every time you start a chapter. The writing should delight you the way it delights your readers!
 
-When you finish a scene and want a section break — those little *** dividers — hit **Enter twice**. When you finish a chapter, hit **Enter three times**. A new chapter appears, numbered for you. If you later squeeze a chapter in between two others, every chapter renumbers itself. You will never type the words "Chapter Twelve" and you will never renumber anything by hand. This alone would have saved me a cumulative month of my life.
+When you finish a scene and want a section break — those little *** dividers — hit **Enter twice**. When you finish a chapter, hit **Enter three times**. A new chapter appears, numbered for you. If you later squeeze a chapter in between two others, every chapter renumbers itself. You will never type the words "Chapter Twelve" again. This alone would've saved me a cumulative month of my life.
 
-Type two hyphens and get an em dash — like that. Type three periods and get a real ellipsis… Quotes curl themselves in the right direction. You'll stop noticing this within an hour, which is the whole idea.
+Type two hyphens and get an em dash — like that. The change happens immediately. OWN THOSE EM DASHES! Type three periods and get a real ellipsis… Quotes curl themselves in the right direction.
 
-And here's the big one: **there is no spellcheck while you write.** No red squiggles yelling WRONG at you while you're mid-thought about a made-up city with a made-up name. Your creative brain doesn't need a klaxon. When you're ready to check spelling — and only then — hit ⌘; and do a deliberate pass. Right-click the squiggles for suggestions. Hit ⌘; again and they're gone.
+Note: **there is no spellcheck while you write.** No red squiggles yelling WRONG at you while you're mid-thought about a made-up city with a made-up name. Your creative brain doesn't need a klaxon. When you're ready to check spelling, hit ⌘; and it'll turn on. Right-click the squiggles for suggestions. Hit ⌘; again to get back into the flow.
 
 **When you need to mark a spot and keep moving**
 
-You're writing, and you need a character name you haven't invented yet, or a fact you'd have to Google. Do not open a browser. The browser is where writing sessions go to die. Hit **⌘⇧X** instead. NEO drops a little mark, makes a sticky note in the margin for later, and you keep writing. The chapter list shows a red dot everywhere you owe yourself a visit. This is the "BOOKMARK" trick I've been preaching for years, built right into the machine.
+I used to type XXX in drafts when I needed to change something later (or look something up, or verify some continuity). Now, you can just hit ⌘⇧X instead. NEO drops a little mark, makes a sticky note in the margin for later, and you keep writing. The chapter list shows a red dot everywhere you left a sticky. The notes are on the hidden right panel any time you need to look for something to fix.
 
 **Darlings**
 
-You know the advice: kill your darlings. That gorgeous paragraph that's gumming up the works has to go, but you can't delete it, because you're a writer, and we all secretly believe the last good sentence we wrote is the last good sentence we'll ever write.
+Kill your darlings, they say. Well, it never gets easy. You're a writer, and we all secretly believe the last good sentence we wrote is the last good sentence we'll ever write.
 
-So don't delete it. Select it and drag it down onto the **Darlings** tab at the bottom of the screen. It leaves your manuscript, but it's saved forever, and — this is my favorite thing in the whole program — if you change your mind, it restores to the exact spot it came from. Kill without remorse. The bodies are all recoverable.
+Instead of deleting it, select it and drag it down onto the **Darlings** tab at the bottom of the screen. It leaves your manuscript, but it's saved forever. If you change your mind, you can restore what you deleted to the exact spot it came from. Kill without remorse. Dig the bodies up later. :)
 
 **The hidden panels**
 
-The screen stays empty until you ask. Push your mouse to the **left edge** and the chapter list slides out — every chapter, its word count, a note field where you can jot what happens in it. You can outline an entire novel from this panel. Push to the **right edge** for your notes and comments. The little ☉ pins it open if you're doing a revision pass.
+The screen stays distraction-free until you need something. Roll your mouse to the **left edge** and the chapter list slides out — every chapter, its word count, a note field where you can jot what happens in it. You can outline an entire novel from this panel. Push to the **right edge** for your notes and comments. The little ☉ here pins it open if you're doing a revision pass.
 
 Along the bottom: tabs for your Notes, your Outline, and your Darlings. Plus a word count. Click the word count to toggle between the whole book and just this chapter.
 
 **The Silo**
 
-When you're serious — when today is a writing day and the internet can go hang — hit ⌘⇧S or click the faint little ◎ silo button at the bottom of the screen.
+There's a fullscreen writing mode you can enter by pressing ⌘⇧F. This is how I love to write and why I made NEO. But sometimes you need to really lock in, and that's where Silo Mode comes in handy. Hit ⌘⇧S or click the faint little ◎ silo button at the bottom of the screen...
 
-The hatch seals. Full screen. No dock, no menu bar, and if you try to alt-tab away, NEO pulls you right back. The only way out is to hit Escape and type the confession NEO gives you, word for word. Things like: *"I'm a great writer and I'll do another session later, but right now I really need to see a cat video."* You have to type the whole thing. Most people, standing at the hatch, staring at that sentence, turn around and go write instead. That's the design working.
+...and the hatch seals. Full screen. No dock, no menu bar, and if you try to alt-tab away, Bernard blocks you. The only way out is to hit Escape and type the confession NEO gives you, word for word. Leaving is painful. Why don't you stay and write?
 
 **Goals, sprints, and the chart**
 
-Click the word counter that says "0 today" (we'll fix that number, you and me) and you get the progress room: set a daily goal, set a book goal, start a word sprint, and watch a chart of your last thirty days that looks a lot like the NaNoWriMo graph, because that graph is the best motivational tool ever bolted onto a writing habit. The constant application of pressure works miracles. NEO just shows you the pressure.
+Click the word counter that says "0 today" and you get the progress room: set a daily goal, set a book goal, start a word sprint, and watch a chart of your last thirty days that looks a lot like the NaNoWriMo graph, because that graph is what got me through many of my novels. Get addicted to writing, to the daily habit!
 
 **Getting your book out**
 
-When your draft is done — and it will be, if you show up every day — the File menu exports to Word for your editor, PDF and plain text and Markdown for whatever, and a proper **EPUB with a real table of contents** built to Amazon's guidelines, cover included. The manuscript you write in NEO is the book you publish from NEO.
+When your draft is done, the File menu exports to Word for your editor so they can track changes, or PDF, plain text, or Markdown. There's a proper **EPUB** option with a real table of contents built to Amazon's guidelines, but this is not highly tested yet, so use at your own risk!
 
-One more trick: hit **⌘E** and NEO emails a timestamped PDF snapshot of your draft to yourself, with a digital fingerprint of the text baked in. It's a paper trail proving your words existed on a date, written by you. In the current era, that's not paranoia. That's provenance.
+**Email backup**
 
-**Where your words live**
+Hit ⌘E and NEO emails a timestamped PDF snapshot of your draft to yourself, with a digital fingerprint of the text. Crypto bros rejoice! Not only is this good for having a backup of your work (even though NEO is saving constantly and protecting against crashes), it creates a paper trail proving your words existed on a date, written by you. This feature could be worth $2.4 million dollars someday!
 
-Everything is saved automatically, constantly, into plain ordinary files in a folder called NEO Library in your Documents. No accounts, no cloud you don't control, no proprietary format holding your novel hostage. Open the folder and look — your chapters are just files. Back them up, sync them with Dropbox, whatever you like. If NEO disappeared tomorrow, every word you wrote would still be sitting right there. Your words are **yours**. That's not a feature. That's the foundation.
+**Safety**
+
+Everything is saved automatically, constantly, into plain ordinary files in a folder called NEO Library in your Documents. Open the folder and look — your chapters are just files. Back them up, sync them with Dropbox, whatever you like. If NEO disappeared tomorrow, every word you wrote would still be there. There's nothing being sent to a cloud (except your own email), nothing anyone else can read, just files on your computer.
 
 **That's it**
 
-That's NEO. Hit ⌘/ anytime to see the shortcut list, but you already know the ones that matter: Enter, Enter, Enter.
+That's NEO. Hit ⌘/ anytime to see the shortcut list, but you already know the ones that matter: Enter, Enter, Enter. Write, write, write.
 
-Now stop reading tutorials and go write. Your rough draft doesn't have to be good. It just has to exist.
+Go get it. Your rough draft doesn't have to be good. It just has to exist. If you want to know anything else I've learned about writing and publishing, I've posted it all for free starting here: https://hughhowey.com/writing-insights-part-one-becoming-a-writer/
