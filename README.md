@@ -1,49 +1,47 @@
 # NEO
 
-**A word processor for authors. Distraction-free by default. Free forever.**
+**A distraction-free word processor for authors, by a wannabe author.**
 
-NEO understands from the moment you install it that you are writing *books* — not blog posts, not school reports, not slide decks. It was designed by a working novelist who tried every writing app on the market and decided to build the one he actually wanted: less bloat than the general-purpose word processors, less confusing than the binder-style writing suites, more useful than the typewriter apps, and built from the ground up for finishing manuscripts and shipping them — to agents, to editors, or straight to your readers.
+NEO understands from the moment you install it that you are writing *books* — not blog posts, not school reports, not slide decks. It was designed by an annoyed novelist who tried every writing app on the market and decided to build the one he actually wanted. No bloat, less confusion, no distractions, with manuscripts that look like books (because they will be)!
 
-It runs entirely on your machine. Your words live in plain, readable files on your own disk. No accounts, no subscription, no telemetry, no lock-in. Ever.
+NEO runs entirely on your machine. Your words live in plain, readable files on your own disk. No accounts or subscription. And it's free!
 
 ## Download
 
 Grab the latest installer from the **[Releases page](../../releases)**:
 
 - **macOS** — download the `.dmg`, open it, drag NEO to Applications.
-- **Windows** — download the `.exe` installer and run it.
-
-*(First launch on macOS: if you see an "unidentified developer" warning, right-click the app and choose Open.)*
+- **Windows** — download the `.exe` installer and run it. (This version is not as tested!)
 
 ## What makes NEO different
 
-**The bookshelf.** Your library looks like a bookshelf, not a file list. Labeled shelves you organize however you like — by series, by status, by pen name. Books wear generated covers, show progress bars toward word goals, and drag-and-drop anywhere.
+**The bookshelf.** Your library looks like a bookshelf, not a file list. Labeled shelves you organize however you like — by series, by status, by pen name. Progress bars on the covers show how far you are from your word goals. You can drag-and-drop books anywhere.
 
-**A page, and nothing else.** White paper, dark surround. Every control fades until you reach for it. Chapters number and renumber themselves. Drop caps mark chapter openings. Em dashes, true ellipses, and curly quotes happen as you type. Spellcheck exists only as a deliberate pass you invoke when *you're* ready — never a red squiggle mid-sentence.
+**A page, and not much else.** There's a white page by default or a dark mode. Controls fade until you reach for them. Chapters number and renumber themselves automatically. Drop caps mark chapter openings, because I'm a sucker for drop-caps. Em dashes, true ellipses, and curly quotes sort themselves out as you type. Spellcheck exists only as a deliberate pass you invoke when *you're* ready — never a red squiggle mid-sentence firing up your imposter syndrome.
 
-**Enter, Enter, Enter.** One Enter: new paragraph. Two: a `***` section break. Three: a new chapter. Your hands never leave the story.
+**Enter, Enter, Enter.** One Enter: new paragraph. Two: a `***` section break. Three: a new chapter. The goal is to KEEP WRITING.
 
-**Darlings.** The famous advice is "kill your darlings" — NEO adds the part nobody mentions: *keep the bodies*. Drag any beautiful-but-in-the-way passage onto the Darlings tab. It leaves your manuscript but is never lost, and restores to the exact spot it came from.
+**Darlings.** The old writing advice is "kill your darlings" — but NEO says: *keep the bodies*. Drag any beautiful-but-in-the-way passage onto the Darlings tab. It leaves your manuscript but is never lost, and restores to the exact spot it came from. More like zombies than darlings, amirite?!
 
-**Placeholders.** Mid-flow and need a name, a fact, a date? ⌘⇧X drops a mark and a sticky note, and you keep writing. The left panel shows a red dot on every chapter with unfinished business.
+**Placeholders.** Mid-flow and need a name, a fact, a date? ⌘⇧X drops a mark and a sticky note, and you keep writing. The left panel shows a red dot on every chapter that you need to get back to.
 
-**Outlining that becomes the book.** Outline chapters and sections in the Outline tab; section notes appear in the manuscript as gray ghost paragraphs, ready to be written over. Pantsers can ignore all of it.
+**Outlining that becomes the book.** Outline chapters and sections in the Outline tab; section notes appear in the manuscript as gray ghost paragraphs, ready to be overwritten. Pantsers can ignore all of it or learn to draw a freakin' map for the first time. Try it. You might like it!
 
-**The Silo.** A focus mode with the courage of its convictions: full kiosk screen, no Dock, no menus, always on top. The only way out is typing a confession NEO hands you, word for word — *"I'm a great writer and I'll do another session later, but right now I really need to see a cat video."* Most people go back to writing.
+**The Silo.** A focus mode: full screen, no Dock, no menus, always on top. The only way out is typing a confession, word for word, meant to humiliate you or at least make you giggle. Do your future self a favor and go back to writing.
 
-**Goals and momentum.** Daily word goals, word sprints, and a NaNoWriMo-style progress chart. A quiet "words today" counter that turns gold when you've earned it.
+**Goals and momentum.** Daily word goals, word sprints, and a NaNoWriMo-style progress chart. Needs more testing, but I think it works okay!
 
-**Real exports.** EPUB 3 with a proper table of contents built to KDP's guidelines, Word .docx, PDF, HTML, Markdown, and plain text. Email a timestamped PDF snapshot to yourself with one keystroke — with a SHA-256 fingerprint of the text in the body, a provenance trail proving your words existed on a date.
+**Real exports.** EPUB 3 with a proper table of contents built to KDP's guidelines, Word .docx, PDF, HTML, markdown, and plain text. Email a timestamped PDF snapshot to yourself with a SHA-256 fingerprint of the text in the body. Might come in handy someday.
 
-**Import.** Bring in existing .docx, .txt, and .md manuscripts; chapters and scene breaks are detected automatically.
+**Import.** Bring in existing .docx, .txt, and .md manuscripts; chapters and scene breaks are detected automatically. This is still a bit rough and might require you to tweak things. NEO is more intended for new projects than importing, but I did this so I can play around with some old stories in a new environment.
 
-**A safety net you'll never think about.** Continuous autosave, atomic writes, daily zip backups kept two weeks, everything stored as plain files that sync happily with Dropbox or iCloud.
+**A safety net.** Continuous autosave, daily zip backups kept for two weeks, everything stored as plain files. Set up your NEO library folder on your iCloud if you want.
 
 ## Your files are yours
 
-Everything lives in `~/Documents/NEO Library` — one folder per book, chapters as readable HTML, metadata as JSON. Open them in any text editor. Back them up, sync them, inspect them. If NEO vanished tomorrow, your books would still be right there, readable.
+Everything lives in `~/Documents/NEO Library` — a folder per book, chapters as readable HTML, metadata as JSON. Open them in any text editor.
 
-## Building from source
+## Building from source (for the eggheads):
 
 Requires [Node.js](https://nodejs.org).
 
@@ -56,16 +54,20 @@ npm start
 
 To build installers: `npm install electron-builder --save-dev`, then `npm run package` (macOS), `npm run package:win` (Windows), or `npm run package:all`. Output lands in `dist/`.
 
-The app is deliberately simple under the hood: an Electron shell (`main.js`), one preload bridge (`preload.js`), and a single-file renderer (`app.js` + `styles.css` + `index.html`). No frameworks, no build step, no transpiler. If you can read JavaScript, you can change NEO.
+The app is deliberately simple: an Electron shell (`main.js`), a preload bridge (`preload.js`), and a single-file renderer (`app.js` + `styles.css` + `index.html`). If you can read JavaScript, you can change NEO. Have at it. Build me a better mousetrap.
 
-## Roadmap
+## Roadmap (things I'm dreaming up but may never get to):
 
-Chapter version history · manuscript format for agent submissions (Times New Roman, double-spaced, address block) · custom cover art · global end matter that updates every book at once · submission tracking · Total Plus word count · auto-updates.
+Chapter version history · manuscript format for agent submissions (Times New Roman, double-spaced, address block, just to make Kristin Nelson happy) · custom cover art (auto-generated based on the text so far, refreshable if you don't like it. Not intended for publication, just to make the bookshelf purty) · global end matter that updates every book at once (same for copyright pages, bios, etc) · submission tracking · auto-updates.
 
 ## Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Fair warning from the project's founding principle: NEO is opinionated by design, and bloat killed every writing app we loved. Features that serve working authors get in; everything else stays out, no matter how cool.
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Fair warning from the project's founding principle: NEO is opinionated by design, and bloat killed every writing app I've ever tried. If you want complex, try Scrivener. It really is a great application beloved by many! There are so many wonderful writing apps out there! Nobody needs to use this but me.
 
 ## License
 
 [MIT](LICENSE) — free to use, free to modify, free to share. Now go write.
+
+## Philosophy
+
+If you didn't know, I opened up the Silo universe to fan fiction years ago. And not just to put on fan fiction sites, but you can charge money for the things you write and keep every penny of the income! Lots of incredible Silo Stories out there. But readers are forever looking for more.
