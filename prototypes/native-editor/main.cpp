@@ -319,7 +319,9 @@ public:
             int pos=-1;
             for(int i=0;originalChapter && i<=text.size();++i) if(text.left(i).endsWith(prefix) && text.mid(i).startsWith(suffix)) { if(pos>=0) {pos=-1;break;} pos=i; }
             auto c=edit->textCursor(); c.setPosition(pos<0?edit->document()->characterCount()-1:pos);
-            if(pos<0) c.insertBlock(QTextBlockFormat(),QTextCharFormat());
+            // Legacy block Darlings are inserted after the host paragraph.
+            if(multi && pos>=0) c.movePosition(QTextCursor::EndOfBlock);
+            if(pos<0 || multi) c.insertBlock(QTextBlockFormat(),QTextCharFormat());
             int start=c.position();
             c.insertFragment(QTextDocumentFragment(&fragment));
             if(multi) { QTextCursor first(edit->document()->findBlock(start)); first.setBlockFormat(fragment.begin().blockFormat()); }
@@ -426,10 +428,14 @@ int main(int argc,char **argv) {
         check("all promotion probes restore initial model",w.data()==initial);
         w.darlingFixture(); auto passageInitial=w.data(); w.cut(); auto afterCut=w.data();
         check("multi-paragraph Darling retains paragraph HTML and emphasis",w.darlings.size()==1 && w.darlings[0].toObject()["html"].toString().count("<p")==2 && w.darlings[0].toObject()["html"].toString().contains("<b>"));
-        w.restore(); check("multi-paragraph restoration exactly restores original model",w.data()==passageInitial);
+        auto cutHtml=w.content[0]; auto darlingHtml=w.darlings[0].toObject()["html"].toString();
+        int hostEnd=cutHtml.indexOf("</p>")+4;
+        auto expectedRestored=cutHtml.left(hostEnd)+darlingHtml+cutHtml.mid(hostEnd);
+        w.restore(); auto restored=w.data();
+        check("multi-paragraph restoration inserts after host paragraph like legacy",w.content[0]==expectedRestored && w.darlings.isEmpty());
         w.undo(); check("undo multi-paragraph restoration restores cut state",w.data()==afterCut);
         w.undo(); check("undo multi-paragraph cut restores original model",w.data()==passageInitial);
-        w.redo(); w.redo(); check("redo multi-paragraph cut and restore",w.data()==passageInitial);
+        w.redo(); w.redo(); check("redo multi-paragraph cut and restore",w.data()==restored);
         w.darlingFixture(); w.cut(); auto savedHtml=w.darlings[0].toObject()["html"].toString();
         w.content={"<p>Changed location.</p>"}; w.render(); auto fallbackBefore=w.data(); w.restore();
         check("missing cut location appends intact Darling paragraphs",w.content[0]=="<p>Changed location.</p>"+savedHtml && w.darlings.isEmpty());
