@@ -204,7 +204,7 @@ public:
         auto row = new QHBoxLayout; layout->addLayout(row); row->addWidget(chapters);
         auto button = [&](QString name, std::function<void()> f) { auto b = new QPushButton(name); row->addWidget(b); connect(b,&QPushButton::clicked,this,[=]{ guarded(f); }); };
         button("Reset fixture",[&]{reset();}); button("Undo",[&]{undo();}); button("Redo",[&]{redo();});
-        button("Cut Darling",[&]{cut();}); button("Restore Darling",[&]{restore();});
+        button("Darling fixture",[&]{darlingFixture();}); button("Cut Darling",[&]{cut();}); button("Restore Darling",[&]{restore();});
         button("Save / reopen",[&]{saveReopen();}); button("PDF",[&]{pdf();});
         auto splitter = new QSplitter; layout->addWidget(splitter,1); splitter->addWidget(edit); splitter->addWidget(state);
         splitter->setSizes({720,480}); state->setReadOnly(true); state->setAccessibleName("Serialized probe state");
@@ -281,33 +281,49 @@ public:
         }
         ++current; render(); run=0;
     }
+    void darlingFixture() {
+        reset();
+        content={"<p>Opening <b>bold passage</b> continues.</p><p style=\"text-align:center\">Middle <i>italic passage</i> continues.</p><p>Closing paragraph stays here.</p>"};
+        meta["sectionNotes"]=Object{}; stickies={}; render();
+        auto c=edit->textCursor(); c.setPosition(8); c.setPosition(edit->document()->findBlockByNumber(1).position()+21,QTextCursor::KeepAnchor); edit->setTextCursor(c);
+    }
     void cut() {
         auto c=edit->textCursor(); if(!c.hasSelection()) return;
-        // Bounded probe: restore only inline passages without semantic markers.
-        if(c.selectedText().contains(QChar::ParagraphSeparator)) throw std::runtime_error("This probe cuts only within one paragraph");
+        bool multi=c.selectedText().contains(QChar::ParagraphSeparator);
+        // Moving section identities or opaque paragraph metadata requires a separate ownership decision.
+        if(multi) for(auto b=edit->document()->findBlock(c.selectionStart()); b.isValid() && b.position()<=c.selectionEnd(); b=b.next()) {
+            auto a=attrs(b.blockFormat()); a.remove("style");
+            if(!a.isEmpty()) throw std::runtime_error("Multi-paragraph Darling with paragraph metadata refused by this bounded probe");
+        }
         QTextDocument fragment; QTextCursor fc(&fragment); fc.insertFragment(QTextDocumentFragment(c)); auto html=encode(&fragment);
         if(html.contains("ph-mark") || html.contains("darling-anchor")) throw std::runtime_error("Marker-bearing Darling selection refused");
         tx([&]{
             QString plain=edit->toPlainText(); int start=c.selectionStart(), end=c.selectionEnd();
             darlings.append(Object{{"id",QUuid::createUuid().toString(QUuid::WithoutBraces)},{"chapterId",meta["chapterOrder"].toArray()[current]},
-                {"chapterLabel",chapters->currentText()},{"text",c.selectedText()},{"html",html.mid(html.indexOf('>')+1).chopped(4)},
+                {"chapterLabel",chapters->currentText()},{"text",QString(c.selectedText()).replace(QChar::ParagraphSeparator,'\n')},{"html",multi ? html : html.mid(html.indexOf('>')+1).chopped(4)},
                 {"anchorPrefix",plain.left(start).right(60)},{"anchorSuffix",plain.mid(end).left(60)},{"date",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}});
             c.removeSelectedText(); edit->setTextCursor(c);
         });
     }
     void restore() {
         if(darlings.isEmpty()) return;
+        auto d=darlings.last().toObject();
+        auto html=d["html"].toString(); bool multi=html.startsWith("<p>") || html.startsWith("<p ");
+        QTextDocument fragment; decode(&fragment,multi ? html : "<p>"+html+"</p>");
         tx([&]{
-            auto d=darlings.last().toObject(); auto ids=meta["chapterOrder"].toArray(); int target=0;
+            auto ids=meta["chapterOrder"].toArray(); int target=0;
             while(target<ids.size() && ids[target]!=d["chapterId"]) ++target;
-            if(target==ids.size()) target=ids.size()-1;
+            bool originalChapter=target<ids.size();
+            if(!originalChapter) target=ids.size()-1;
             sync(); current=target; render(); QString text=edit->toPlainText(); QString prefix=d["anchorPrefix"].toString(), suffix=d["anchorSuffix"].toString();
             int pos=-1;
-            for(int i=0;i<=text.size();++i) if(text.left(i).endsWith(prefix) && text.mid(i).startsWith(suffix)) { if(pos>=0) {pos=-1;break;} pos=i; }
+            for(int i=0;originalChapter && i<=text.size();++i) if(text.left(i).endsWith(prefix) && text.mid(i).startsWith(suffix)) { if(pos>=0) {pos=-1;break;} pos=i; }
             auto c=edit->textCursor(); c.setPosition(pos<0?edit->document()->characterCount()-1:pos);
             if(pos<0) c.insertBlock(QTextBlockFormat(),QTextCharFormat());
-            QTextDocument fragment; decode(&fragment,"<p>"+d["html"].toString()+"</p>");
-            c.insertFragment(QTextDocumentFragment(&fragment)); edit->setTextCursor(c); darlings.removeLast();
+            int start=c.position();
+            c.insertFragment(QTextDocumentFragment(&fragment));
+            if(multi) { QTextCursor first(edit->document()->findBlock(start)); first.setBlockFormat(fragment.begin().blockFormat()); }
+            edit->setTextCursor(c); darlings.removeLast();
         });
     }
     void write(QString path,QByteArray bytes) {
@@ -408,6 +424,19 @@ int main(int argc,char **argv) {
         endOfGhost();press(Qt::Key_X,"x");check("typing promotes ghost",promoted());w.undo();
         endOfGhost();press(Qt::Key_Return);check("Enter promotes outline paragraph before split",!w.content[0].contains("class=\"ghost\""));w.undo();
         check("all promotion probes restore initial model",w.data()==initial);
+        w.darlingFixture(); auto passageInitial=w.data(); w.cut(); auto afterCut=w.data();
+        check("multi-paragraph Darling retains paragraph HTML and emphasis",w.darlings.size()==1 && w.darlings[0].toObject()["html"].toString().count("<p")==2 && w.darlings[0].toObject()["html"].toString().contains("<b>"));
+        w.restore(); check("multi-paragraph restoration exactly restores original model",w.data()==passageInitial);
+        w.undo(); check("undo multi-paragraph restoration restores cut state",w.data()==afterCut);
+        w.undo(); check("undo multi-paragraph cut restores original model",w.data()==passageInitial);
+        w.redo(); w.redo(); check("redo multi-paragraph cut and restore",w.data()==passageInitial);
+        w.darlingFixture(); w.cut(); auto savedHtml=w.darlings[0].toObject()["html"].toString();
+        w.content={"<p>Changed location.</p>"}; w.render(); auto fallbackBefore=w.data(); w.restore();
+        check("missing cut location appends intact Darling paragraphs",w.content[0]=="<p>Changed location.</p>"+savedHtml && w.darlings.isEmpty());
+        w.undo(); check("fallback restoration undo retains Darling",w.data()==fallbackBefore);
+        w.reset(); auto markerBefore=w.data(); c=w.edit->textCursor(); c.select(QTextCursor::Document); w.edit->setTextCursor(c);
+        bool markerRefused=false; try {w.cut();} catch(...) {markerRefused=true;}
+        check("multi-paragraph semantic metadata refusal leaves model intact",markerRefused && w.data()==markerBefore);
         w.pdf();w.show();app.processEvents();w.grab().save(out+"/window.png");
         log<<"Platform: "<<QGuiApplication::platformName()<<"; Qt "<<qVersion()<<"; artifacts "<<out<<Qt::endl;
         return failures?1:0;

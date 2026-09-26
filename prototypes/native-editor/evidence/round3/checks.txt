@@ -1,0 +1,43 @@
+PASS fixture save/reopen preserves serialized model
+PASS generic Qt HTML serializer loses domain attributes (negative control)
+PASS unsupported HTML rejected
+PASS refuse lossy markup without altering destination: <p>a<span data-extra="retain"></span>b</p>
+PASS refuse lossy markup without altering destination: <p>a<br data-extra="retain"/>b</p>
+PASS refuse lossy markup without altering destination: <p><!--retain-->text</p>
+PASS refuse lossy markup without altering destination: <p xmlns:x="urn:fixture" x:extra="retain">text</p>
+PASS refuse lossy markup without altering destination: <p><span data-sid="one">a<b>b</b></span></p>
+PASS typing undo includes metadata
+PASS typing redo/undo
+PASS first Enter splits paragraph
+PASS second Enter creates scene
+PASS third Enter creates chapter
+PASS chapter split moves section and sticky ownership
+PASS structural undo restores document and chapter order
+PASS Darling cut
+PASS Darling restoration round trip
+PASS undo restores Darling record
+PASS undo cut restores model
+PASS IME preedit is not persisted
+PASS IME cancellation unchanged
+PASS IME commit inserted
+PASS IME commit undo
+PASS IME preview keeps ghost and adds no history
+PASS IME commit promotes ghost with section identity and exports prose
+PASS undo IME promotion restores ghost and metadata
+PASS IME replacement-only deletion promotes ghost
+PASS paste promotes ghost and exports prose
+PASS paste and ghost promotion undo together
+PASS empty clipboard leaves ghost unchanged
+PASS selection shortcut leaves ghost unchanged
+PASS typing promotes ghost
+PASS Enter promotes outline paragraph before split
+PASS all promotion probes restore initial model
+PASS multi-paragraph Darling retains paragraph HTML and emphasis
+PASS multi-paragraph restoration exactly restores original model
+PASS undo multi-paragraph restoration restores cut state
+PASS undo multi-paragraph cut restores original model
+PASS redo multi-paragraph cut and restore
+PASS missing cut location appends intact Darling paragraphs
+PASS fallback restoration undo retains Darling
+PASS multi-paragraph semantic metadata refusal leaves model intact
+Platform: wayland; Qt 6.11.2; artifacts /tmp/leo-editor-PROTOTYPE-22700
