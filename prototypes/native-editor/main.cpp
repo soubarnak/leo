@@ -53,14 +53,22 @@ void decode(QTextDocument *doc, QString html) {
     QTextDocument temp;
     QTextCursor c(&temp);
     QList<QTextCharFormat> stack;
-    bool first = true, inP = false;
+    QList<int> spanStarts;
+    bool first = true, inP = false, rootSeen = false;
     while (!xml.atEnd()) {
         xml.readNext();
         QString tag = xml.name().toString();
         if (xml.isStartElement()) {
             Object a;
-            for (auto at : xml.attributes()) a[at.name().toString()] = at.value().toString();
-            if (tag == "root") continue;
+            if(!xml.namespaceUri().isEmpty() || !xml.namespaceDeclarations().isEmpty()) throw std::runtime_error("Namespaced markup refused");
+            for (auto at : xml.attributes()) {
+                if(!at.namespaceUri().isEmpty()) throw std::runtime_error("Namespaced metadata refused");
+                a[at.name().toString()] = at.value().toString();
+            }
+            if (tag == "root") {
+                if(rootSeen) throw std::runtime_error("Embedded root element refused");
+                rootSeen=true; continue;
+            }
             if (tag == "p") {
                 if (inP) throw std::runtime_error("Nested paragraph refused");
                 QTextBlockFormat bf; bf.setProperty(Attrs, a);
@@ -75,16 +83,23 @@ void decode(QTextDocument *doc, QString html) {
                 else c.insertBlock(bf, QTextCharFormat());
                 c.setCharFormat(QTextCharFormat()); inP = true;
             } else if (!inP) throw std::runtime_error("Content outside paragraphs refused");
-            else if (tag == "br") c.insertText(QString(QChar::LineSeparator));
+            else if (tag == "br") {
+                if(!a.isEmpty()) throw std::runtime_error("Metadata on line breaks refused");
+                c.insertText(QString(QChar::LineSeparator));
+            }
             else if (tag == "b" || tag == "strong" || tag == "i" || tag == "em" || tag == "span") {
                 auto f = c.charFormat(); stack.append(f);
                 if (tag == "b" || tag == "strong") f.setFontWeight(QFont::Bold);
                 if (tag == "i" || tag == "em") f.setFontItalic(true);
                 if (tag == "span") {
                     if (a.contains("style") || !attrs(f).isEmpty()) throw std::runtime_error("Styled/nested spans refused");
+                    spanStarts.append(c.position());
                     f.setProperty(Attrs, a);
                     if (hasClass(a,"ph-mark")) f.setForeground(QColor("#ac652c"));
-                } else if (!a.isEmpty()) throw std::runtime_error("Attributes on emphasis refused");
+                } else {
+                    if (!a.isEmpty()) throw std::runtime_error("Attributes on emphasis refused");
+                    if (!attrs(f).isEmpty()) throw std::runtime_error("Formatting that would split an attributed span refused");
+                }
                 c.setCharFormat(f);
             } else throw std::runtime_error(("Unsupported element: " + tag).toStdString());
         } else if (xml.isEndElement()) {
@@ -93,12 +108,13 @@ void decode(QTextDocument *doc, QString html) {
                 if (c.block().text() == QString(QChar::LineSeparator)) { c.deletePreviousChar(); }
                 inP = false;
             } else if (tag == "b" || tag == "strong" || tag == "i" || tag == "em" || tag == "span") {
+                if(tag=="span" && c.position()==spanStarts.takeLast()) throw std::runtime_error("Empty span metadata cannot be represented by this probe");
                 c.setCharFormat(stack.takeLast());
             }
         } else if (xml.isCharacters()) {
             if (inP) c.insertText(xml.text().toString());
             else if (!xml.isWhitespace()) throw std::runtime_error("Loose text refused");
-        }
+        } else if(xml.isComment() || xml.isProcessingInstruction() || xml.isDTD()) throw std::runtime_error("Opaque markup refused");
     }
     if (xml.hasError()) throw std::runtime_error(xml.errorString().toStdString());
     doc->clear(); QTextCursor out(doc); out.insertFragment(QTextDocumentFragment(&temp));
@@ -116,30 +132,55 @@ public:
     std::function<void(std::function<void()>)> transaction;
     std::function<void()> enter, undoAction, redoAction;
     bool composing = false;
+    // A writing operation promotes outline text; merely previewing an IME
+    // composition, copying, selecting or navigating must not change the book.
+    void prepareInput(QTextCursor affected) {
+        int end = affected.selectionEnd();
+        for (auto b = document()->findBlock(affected.selectionStart()); b.isValid() && b.position() <= end; b=b.next()) {
+            if (affected.hasSelection() && b.position()==end) break;
+            auto a=attrs(b.blockFormat());
+            if (!hasClass(a,"ghost")) continue;
+            auto classes=a["class"].toString().split(' ',Qt::SkipEmptyParts); classes.removeAll("ghost");
+            if(classes.isEmpty()) a.remove("class"); else a["class"]=classes.join(' ');
+            auto bf=b.blockFormat(); bf.setProperty(Attrs,a); QTextCursor block(b); block.setBlockFormat(bf);
+        }
+        auto c=textCursor();
+        if(!c.hasSelection()) {auto f=c.charFormat();f.clearProperty(Attrs);c.setCharFormat(f);setTextCursor(c);}
+    }
     void keyPressEvent(QKeyEvent *e) override {
         if (composing) { QTextEdit::keyPressEvent(e); return; }
         if (e->matches(QKeySequence::Undo)) { undoAction(); return; }
         if (e->matches(QKeySequence::Redo)) { redoAction(); return; }
         if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && e->modifiers() == Qt::NoModifier && !textCursor().hasSelection()) { enter(); return; }
         transaction([&] {
-            auto c = textCursor();
-            bool editing = !e->text().isEmpty() || e->key() == Qt::Key_Backspace || e->key() == Qt::Key_Delete;
-            if (editing) {
-                auto a = attrs(c.blockFormat());
-                if (hasClass(a,"ghost")) {
-                    a.remove("class"); auto bf = c.blockFormat(); bf.setProperty(Attrs,a); c.setBlockFormat(bf);
-                }
-                if (!c.hasSelection()) { auto f = c.charFormat(); f.clearProperty(Attrs); c.setCharFormat(f); setTextCursor(c); }
-            }
+            bool typing = !e->text().isEmpty() && e->text()[0].isPrint() &&
+                (!(e->modifiers() & (Qt::ControlModifier|Qt::MetaModifier)) ||
+                 ((e->modifiers() & Qt::ControlModifier) && (e->modifiers() & Qt::AltModifier)));
+            bool editing = typing || e->key() == Qt::Key_Backspace || e->key() == Qt::Key_Delete ||
+                (e->matches(QKeySequence::Cut) && textCursor().hasSelection());
+            if(editing) prepareInput(textCursor());
             QTextEdit::keyPressEvent(e);
         });
     }
     void inputMethodEvent(QInputMethodEvent *e) override {
-        transaction([&] { QTextEdit::inputMethodEvent(e); });
+        transaction([&] {
+            if(!e->commitString().isEmpty() || e->replacementLength()!=0) {
+                auto c=textCursor();
+                if(e->replacementLength()!=0) {
+                    int start=qBound(0,c.position()+e->replacementStart(),document()->characterCount()-1);
+                    int end=qBound(0,start+e->replacementLength(),document()->characterCount()-1);
+                    int left=qMin(c.selectionStart(),start), right=qMax(c.selectionEnd(),end);
+                    c.setPosition(left);c.setPosition(right,QTextCursor::KeepAnchor);
+                }
+                prepareInput(c);
+            }
+            QTextEdit::inputMethodEvent(e);
+        });
         composing = !e->preeditString().isEmpty();
     }
     void insertFromMimeData(const QMimeData *m) override {
-        transaction([&] { auto c = textCursor(); c.insertText(m->text(), QTextCharFormat()); setTextCursor(c); });
+        if(m->text().isEmpty()) return;
+        transaction([&] { prepareInput(textCursor()); auto c = textCursor(); c.insertText(m->text(), QTextCharFormat()); setTextCursor(c); });
     }
 };
 class Window : public QMainWindow {
@@ -211,6 +252,7 @@ public:
     void enter() {
         auto c=edit->textCursor(); auto a=attrs(c.blockFormat());
         if(hasClass(a,"scene-break")) return;
+        edit->prepareInput(c);
         ++run;
         if(run==1) { c.insertBlock(QTextBlockFormat(),QTextCharFormat()); edit->setTextCursor(c); return; }
         if(run==2) {
@@ -323,6 +365,13 @@ int main(int argc,char **argv) {
         w.saveReopen(); check("fixture save/reopen preserves serialized model",w.data()==initial);
         QTextDocument generic; generic.setHtml(fixture()); check("generic Qt HTML serializer loses domain attributes (negative control)",!generic.toHtml().contains("data-sid"));
         bool refused=false; try {QTextDocument d;decode(&d,"<p>before<img src=\"x\"/>after</p>");} catch(...) {refused=true;} check("unsupported HTML rejected",refused);
+        for(auto html: {"<p>a<span data-extra=\"retain\"></span>b</p>","<p>a<br data-extra=\"retain\"/>b</p>",
+                       "<p><!--retain-->text</p>","<p xmlns:x=\"urn:fixture\" x:extra=\"retain\">text</p>",
+                       "<p><span data-sid=\"one\">a<b>b</b></span></p>"}) {
+            QTextDocument d;decode(&d,fixture());auto before=encode(&d);bool rejected=false;
+            try{decode(&d,html);}catch(...){rejected=true;}
+            check(QString("refuse lossy markup without altering destination: ")+html,rejected && encode(&d)==before);
+        }
         auto c=w.edit->textCursor(); c.setPosition(7); w.edit->setTextCursor(c);
         press(Qt::Key_X,"x"); w.undo(); check("typing undo includes metadata",w.data()==initial); w.redo(); w.undo(); check("typing redo/undo",w.data()==initial);
         c=w.edit->textCursor();c.setPosition(7);w.edit->setTextCursor(c);
@@ -337,6 +386,28 @@ int main(int argc,char **argv) {
         QInputMethodEvent pre(QString::fromUtf8("বাংলা"),{});QApplication::sendEvent(w.edit,&pre);check("IME preedit is not persisted",w.data()==initial);
         QInputMethodEvent cancel;QApplication::sendEvent(w.edit,&cancel);check("IME cancellation unchanged",w.data()==initial);
         QInputMethodEvent commit;commit.setCommitString(QString::fromUtf8("বাংলা"));QApplication::sendEvent(w.edit,&commit);check("IME commit inserted",w.edit->toPlainText().endsWith(QString::fromUtf8("বাংলা")));w.undo();check("IME commit undo",w.data()==initial);
+        // Decision probes: committed prose must never remain export-hidden as a ghost.
+        auto endOfGhost=[&]{auto cursor=w.edit->textCursor();cursor.movePosition(QTextCursor::End);w.edit->setTextCursor(cursor);};
+        auto promoted=[&]{auto a=attrs(w.edit->document()->lastBlock().blockFormat());return !hasClass(a,"ghost") && a["data-sec-id"]=="section-ghost";};
+        endOfGhost();
+        QInputMethodEvent preAgain(QString::fromUtf8("বাংলা"),{});QApplication::sendEvent(w.edit,&preAgain);
+        check("IME preview keeps ghost and adds no history",w.data()==initial && w.history.isEmpty());
+        QInputMethodEvent cancelAgain;QApplication::sendEvent(w.edit,&cancelAgain);
+        QInputMethodEvent committed;committed.setCommitString(QString::fromUtf8("বাংলা"));QApplication::sendEvent(w.edit,&committed);
+        check("IME commit promotes ghost with section identity and exports prose",promoted() && encode(w.edit->document(),true).contains("Replace this outline prompt with prose.বাংলা"));
+        w.undo();check("undo IME promotion restores ghost and metadata",w.data()==initial);
+        endOfGhost();QInputMethodEvent removal;removal.setCommitString("",-1,1);QApplication::sendEvent(w.edit,&removal);
+        check("IME replacement-only deletion promotes ghost",promoted() && w.edit->toPlainText().endsWith("prose"));w.undo();
+        endOfGhost();QMimeData pasted;pasted.setText(" Pasted prose");w.edit->insertFromMimeData(&pasted);
+        check("paste promotes ghost and exports prose",promoted() && encode(w.edit->document(),true).contains("Pasted prose"));
+        w.undo();check("paste and ghost promotion undo together",w.data()==initial);
+        endOfGhost();QMimeData empty;w.edit->insertFromMimeData(&empty);
+        check("empty clipboard leaves ghost unchanged",w.data()==initial && w.history.isEmpty());
+        QKeyEvent selectAll(QEvent::KeyPress,Qt::Key_A,Qt::ControlModifier,QString(QChar(1)));QApplication::sendEvent(w.edit,&selectAll);
+        check("selection shortcut leaves ghost unchanged",w.data()==initial && w.history.isEmpty());
+        endOfGhost();press(Qt::Key_X,"x");check("typing promotes ghost",promoted());w.undo();
+        endOfGhost();press(Qt::Key_Return);check("Enter promotes outline paragraph before split",!w.content[0].contains("class=\"ghost\""));w.undo();
+        check("all promotion probes restore initial model",w.data()==initial);
         w.pdf();w.show();app.processEvents();w.grab().save(out+"/window.png");
         log<<"Platform: "<<QGuiApplication::platformName()<<"; Qt "<<qVersion()<<"; artifacts "<<out<<Qt::endl;
         return failures?1:0;

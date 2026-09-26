@@ -1,0 +1,4 @@
+PASS native-to-baseline-DOM-to-native canonical HTML equality, apart from intentional Legacy edit: prefix
+PASS full book metadata and sticky JSON equality
+Browser: connected Chromium browser; baseline functions: captureBody, syncGhosts, reconcileMarks
+Not a full desktop or Android/Pocket application test.
