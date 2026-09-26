@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cmake -S "$here" -B "$here/build" >/dev/null
+cmake --build "$here/build" -j2 >/dev/null
+exec "$here/build/leo-editor-probe" "$@"

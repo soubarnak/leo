@@ -1,0 +1,19 @@
+PASS fixture save/reopen preserves serialized model
+PASS generic Qt HTML serializer loses domain attributes (negative control)
+PASS unsupported HTML rejected
+PASS typing undo includes metadata
+PASS typing redo/undo
+PASS first Enter splits paragraph
+PASS second Enter creates scene
+PASS third Enter creates chapter
+PASS chapter split moves section and sticky ownership
+PASS structural undo restores document and chapter order
+PASS Darling cut
+PASS Darling restoration round trip
+PASS undo restores Darling record
+PASS undo cut restores model
+PASS IME preedit is not persisted
+PASS IME cancellation unchanged
+PASS IME commit inserted
+PASS IME commit undo
+Platform: wayland; Qt 6.11.2; artifacts /tmp/leo-editor-PROTOTYPE-14541
