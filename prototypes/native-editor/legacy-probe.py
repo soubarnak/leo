@@ -88,7 +88,8 @@ fetch('/result', {method:'POST',headers:{'Content-Type':'application/json'},body
     else:
         result = None
     (folder / 'probe.html').write_text(page)
-    command = ['/opt/vivaldi/vivaldi', '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--user-data-dir=' + str(folder / 'profile'), '--dump-dom', (folder / 'probe.html').as_uri()]
+    browser = os.environ.get('LEO_BROWSER', '/opt/vivaldi/vivaldi')
+    command = [browser, '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--user-data-dir=' + str(folder / 'profile'), '--dump-dom', (folder / 'probe.html').as_uri()]
     process = None if result is not None else subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
         stdout, stderr = process.communicate(timeout=40) if process else ('', '')

@@ -1,0 +1,40 @@
+{
+  "before": "<p data-extra=\"keep-me\">Before <b>bold</b> and <i>italic</i>; বাংলা; العربية; é; 👩🏽‍💻.</p><p data-sec-id=\"section-written\">Written section <span class=\"ph-mark\" contenteditable=\"false\" data-sid=\"sticky-one\">⚑</span> after marker.</p><p class=\"scene-break\">***</p><p style=\"text-align:center\">Centered prose.</p><p class=\"scene-break\" data-sec-brk=\"section-ghost\">***</p><p class=\"ghost\" data-sec-id=\"section-ghost\">Replace this outline prompt with prose.</p>",
+  "after": "<p data-extra=\"keep-me\">Legacy edit: Before <b>bold</b> and <i>italic</i>; বাংলা; العربية; é; 👩🏽‍💻.</p><p data-sec-id=\"section-written\">Written section <span class=\"ph-mark\" contenteditable=\"false\" data-sid=\"sticky-one\">⚑</span> after marker.</p><p class=\"scene-break\">***</p><p style=\"text-align:center\">Centered prose.</p><p class=\"scene-break\" data-sec-brk=\"section-ghost\">***</p><p class=\"ghost\" data-sec-id=\"section-ghost\">Replace this outline prompt with prose.</p>",
+  "book": {
+    "author": "No real manuscript",
+    "chapterOrder": [
+      "ch-one"
+    ],
+    "id": "book-PROTOTYPE",
+    "sectionNotes": {
+      "ch-one": [
+        {
+          "id": "section-written",
+          "text": "Written"
+        },
+        {
+          "id": "section-ghost",
+          "text": "Replace this outline prompt with prose."
+        }
+      ]
+    },
+    "title": "Synthetic native probe",
+    "unknownMetadata": {
+      "nested": [
+        1,
+        "preserve",
+        true
+      ]
+    }
+  },
+  "stickies": [
+    {
+      "chapterId": "ch-one",
+      "id": "sticky-one",
+      "resolved": false,
+      "text": "Synthetic sticky"
+    }
+  ],
+  "writes": []
+}

@@ -1,0 +1,14 @@
+PASS baseline DOM routines through headless Chromium 153 on a native-saved synthetic fixture
+PASS native reimport equals the browser-edited canonical HTML exactly (legacy-saved == native-return)
+PASS unknown book metadata and sticky JSON equality
+Browser: Chromium 153.0.8010.52 headless via LEO_BROWSER override; baseline functions: captureBody, syncGhosts, reconcileMarks
+Host: Debian GNU/Linux forky/sid (this machine moved from Void mid-effort); Qt 6.10.2; display platform xcb
+Not a full desktop or Android/Pocket application test.
+
+Raw comparison (python3):
+expected(native-return) == native : True
+legacy == native : True
+unknownMetadata equal : True
+stickies equal : True
+diff(expected,native) : None
+diff(legacy,native) : None

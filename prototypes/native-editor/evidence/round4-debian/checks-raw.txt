@@ -1,0 +1,600 @@
+PASS fixture save/reopen preserves serialized model
+PASS generic Qt HTML serializer loses domain attributes (negative control)
+PASS unsupported HTML rejected
+PASS refuse lossy markup without altering destination: <p>a<span data-extra="retain"></span>b</p>
+PASS refuse lossy markup without altering destination: <p>a<br data-extra="retain"/>b</p>
+PASS refuse lossy markup without altering destination: <p><!--retain-->text</p>
+PASS refuse lossy markup without altering destination: <p xmlns:x="urn:fixture" x:extra="retain">text</p>
+PASS refuse lossy markup without altering destination: <p><span data-sid="one">a<b>b</b></span></p>
+PASS typing undo includes metadata
+PASS typing redo/undo
+PASS first Enter splits paragraph
+PASS second Enter creates scene
+PASS third Enter creates chapter
+PASS chapter split moves section and sticky ownership
+PASS structural undo restores document and chapter order
+PASS Darling cut
+PASS Darling restoration round trip
+PASS undo restores Darling record
+PASS undo cut restores model
+PASS IME preedit is not persisted
+PASS IME cancellation unchanged
+PASS IME commit inserted
+PASS IME commit undo
+PASS IME preview keeps ghost and adds no history
+PASS IME commit promotes ghost with section identity and exports prose
+PASS undo IME promotion restores ghost and metadata
+PASS IME replacement-only deletion promotes ghost
+PASS paste promotes ghost and exports prose
+PASS paste and ghost promotion undo together
+PASS empty clipboard leaves ghost unchanged
+PASS selection shortcut leaves ghost unchanged
+PASS typing promotes ghost
+PASS Enter promotes outline paragraph before split
+PASS all promotion probes restore initial model
+PASS multi-paragraph Darling retains paragraph HTML and emphasis
+PASS multi-paragraph restoration inserts after host paragraph like legacy
+PASS undo multi-paragraph restoration restores cut state
+PASS undo multi-paragraph cut restores original model
+PASS redo multi-paragraph cut and restore
+PASS missing cut location appends intact Darling paragraphs
+PASS fallback restoration undo retains Darling
+PASS multi-paragraph semantic metadata refusal leaves model intact
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans", script 12
+qt.text.font.db: OpenType support missing for "URW Gothic", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "OpenSymbol", script 12
+qt.text.font.db: OpenType support missing for "FontAwesome", script 12
+qt.text.font.db: OpenType support missing for "Quicksand", script 12
+qt.text.font.db: OpenType support missing for "MathJax_AMS", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Caligraphic", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Fraktur", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Main", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Math", script 12
+qt.text.font.db: OpenType support missing for "MathJax_SansSerif", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Script", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size1", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size2", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size3", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Size4", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Typewriter", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinChrome", script 12
+qt.text.font.db: OpenType support missing for "MathJax_WinIE6", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "DejaVu Serif", script 12
+qt.text.font.db: OpenType support missing for "Liberation Mono", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans", script 12
+qt.text.font.db: OpenType support missing for "Liberation Serif", script 12
+qt.text.font.db: OpenType support missing for "Lato", script 12
+qt.text.font.db: OpenType support missing for "Noto Sans Mono", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab", script 12
+qt.text.font.db: OpenType support missing for "Roboto Slab SC", script 12
+qt.text.font.db: OpenType support missing for "D050000L", script 12
+qt.text.font.db: OpenType support missing for "Standard Symbols PS", script 12
+qt.text.font.db: OpenType support missing for "C059", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Mono PS", script 12
+qt.text.font.db: OpenType support missing for "Nimbus Roman", script 12
+qt.text.font.db: OpenType support missing for "P052", script 12
+qt.text.font.db: OpenType support missing for "Noto Mono", script 12
+qt.text.font.db: OpenType support missing for "Droid Sans Fallback", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 5 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 6 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Brands Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Regular", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome 7 Free Solid", script 12
+qt.text.font.db: OpenType support missing for "Font Awesome v4 Compatibility Regular", script 12
+qt.text.font.db: OpenType support missing for "Courier 10 Pitch", script 12
+qt.text.font.db: OpenType support missing for "Bitstream Charter", script 12
+qt.text.font.db: OpenType support missing for "Symbola", script 12
+qt.text.font.db: OpenType support missing for "Liberation Sans Narrow", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Medium", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector-Bold", script 12
+qt.text.font.db: OpenType support missing for "MathJax_Vector", script 12
+qt.text.font.db: OpenType support missing for "Quicksand Light", script 12
+qt.text.font.db: OpenType support missing for "URW Bookman", script 12
+qt.text.font.db: OpenType support missing for "Z003", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+qt.text.font.db: OpenType support missing for "", script 12
+Platform: xcb; Qt 6.10.2; artifacts /tmp/leo-editor-PROTOTYPE-122830
