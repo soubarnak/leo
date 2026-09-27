@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>LEO recovery decisions — disposable walkthrough</title>
+<style>
+  body { font: 16px/1.5 system-ui,sans-serif; color: #26343a; background: #f5f7f6; margin: 0 auto; padding: 2rem; max-width: 900px }
+  h1 { font-size: 1.8rem; margin-bottom: .3rem } h2 { font-size: 1.15rem; margin-top: 1.5rem }
+  p { max-width: 72ch } .panel { background: white; border: 1px solid #d9e2df; border-radius: 8px; padding: 1rem; margin-top: 1rem }
+  .state { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: .6rem }
+  .field { border-top: 1px solid #e4ebe8; padding-top: .5rem } .field strong { display: block; font-size: .8rem; color: #53615f }
+  button { border: 1px solid #146b60; background: #fff; color: #135c54; border-radius: 6px; padding: .5rem .7rem; margin: .25rem; cursor: pointer }
+  button:hover, button.active { background: #146b60; color: white } .message { color: #8a3b16; font-weight: 600 }
+  .steps button { display: block; text-align: left; width: min(100%,600px) } .steps button:disabled { opacity: .45; cursor: default }
+</style>
+<h1>LEO recovery decisions</h1>
+<p><strong>Disposable logic demo.</strong> Should conflict and restore choices work this way? Click a walkthrough, then try actions freely. This simulates decisions; the companion Python proof exercises real files.</p>
+<div class="panel"><h2>Current state</h2><div id="message" class="message"></div><div id="state" class="state"></div></div>
+<div class="panel"><h2>Try any action</h2><div id="actions"></div></div>
+<div class="panel"><h2>Guided walkthroughs</h2><div id="tabs"></div><p id="description"></p><div id="steps" class="steps"></div></div>
+<script>
+// Pure decision model; DOM code below only dispatches actions and renders results.
+const initial = () => ({active: 'Shared library', live: 'Original chapter', draft: null,
+  external: null, externalCopy: null, localCopy: null, savedSnapshot: 'Older chapter', safety: null,
+  recovered: null, inspected: false, paused: false, message: 'Book ready.'});
+function decide(previous, action) {
+  const s = {...previous};
+  switch (action) {
+    case 'edit': s.draft = 'My new paragraph'; s.message = 'Draft changed; save pending.'; break;
+    case 'external': s.live = 'Pocket paragraph'; s.external = s.draft ? s.live : null;
+      s.message = s.draft ? 'External change arrived while draft is open.' : 'External change arrived.'; break;
+    case 'save':
+      if (!s.draft) s.message = 'No changed draft to save.';
+      else if (s.paused || s.external) { s.localCopy = s.draft; s.externalCopy = s.live; s.paused = true;
+        s.message = 'Save paused. Both versions retained. Choose how to continue.'; }
+      else { s.live = s.draft; s.draft = null; s.message = 'Chapter saved.'; }
+      break;
+    case 'keepExternal':
+      if (!s.paused) { s.message = 'No conflict to resolve.'; break; }
+      s.draft = null; s.paused = false; s.external = null;
+      s.message = 'Shared version kept. Local copy remains available for inspection.'; break;
+    case 'useLocal':
+      if (!s.paused) { s.message = 'No conflict to resolve.'; break; }
+      s.live = s.localCopy; s.draft = null; s.paused = false; s.external = null;
+      s.message = 'Local version chosen explicitly. External copy remains available for inspection.'; break;
+    case 'restore':
+      if (s.recovered) { s.message = 'Recovered library already prepared.'; break; }
+      s.safety = s.live; s.recovered = s.savedSnapshot; s.inspected = false;
+      s.message = 'Safety snapshot saved. Separate recovered library prepared. Shared library unchanged.'; break;
+    case 'inspect':
+      if (!s.recovered) { s.message = 'Prepare recovered library first.'; break; }
+      s.inspected = true; s.message = 'Recovered library inspected; choose whether to switch.'; break;
+    case 'switch':
+      if (!s.inspected) { s.message = 'Inspect recovered library first.'; break; }
+      s.active = 'Recovered library'; s.message = 'Editing now uses recovered library. Original shared library remains.'; break;
+    case 'failedSafety':
+      s.message = 'Safety snapshot failed. Restoration stopped; shared library unchanged.'; break;
+  }
+  return s;
+}
+const labels = {edit:'Edit chapter',external:'Pocket changes shared chapter',save:'Save draft',
+  keepExternal:'Keep shared version',useLocal:'Choose my local version',restore:'Restore older snapshot',
+  inspect:'Inspect recovered library',switch:'Switch to recovered library',failedSafety:'Try restore when safety snapshot fails'};
+const walks = [
+  {title:'Accidental overlap',description:'Watch what happens when Pocket changes the chapter before your local save.',
+   steps:['edit','external','save','keepExternal']},
+  {title:'Choose local writing',description:'Both copies survive. Choosing local writing requires an explicit decision.',
+   steps:['edit','external','save','useLocal']},
+  {title:'Restore safely',description:'Restoration makes a new library. Inspection comes before switching.',
+   steps:['restore','inspect','switch']},
+  {title:'Safety failure',description:'A failed safety snapshot stops restoration.',steps:['failedSafety']}
+];
+let state = initial(), selected = 0, progress = 0;
+const field = (label, value) => `<div class="field"><strong>${label}</strong>${value ?? 'None'}</div>`;
+function render() {
+  document.querySelector('#message').textContent = state.message;
+  document.querySelector('#state').innerHTML = [
+    field('Active library',state.active),field('Shared chapter',state.live),
+    field('Unsaved draft',state.draft),field('Preserved local copy',state.localCopy),
+    field('Observed external version',state.external),field('Preserved external copy',state.externalCopy),
+    field('Save paused',state.paused ? 'Yes' : 'No'),
+    field('Safety snapshot of current library',state.safety),field('Separate recovered library',state.recovered),
+    field('Recovered library inspected',state.inspected ? 'Yes' : 'No')].join('');
+  document.querySelector('#actions').innerHTML = Object.entries(labels).map(([action,label]) =>
+    `<button data-action="${action}">${label}</button>`).join('');
+  document.querySelector('#tabs').innerHTML = walks.map((walk,index) =>
+    `<button data-tab="${index}" class="${index === selected ? 'active' : ''}">${walk.title}</button>`).join('');
+  document.querySelector('#description').textContent = walks[selected].description;
+  document.querySelector('#steps').innerHTML = walks[selected].steps.map((action,index) =>
+    `<button data-step="${index}" ${index !== progress ? 'disabled' : ''}>${index + 1}. ${labels[action]}</button>`).join('');
+}
+document.addEventListener('click', event => {
+  const button = event.target.closest('button'); if (!button) return;
+  if (button.dataset.tab !== undefined) { selected = Number(button.dataset.tab); progress = 0; state = initial(); }
+  else if (button.dataset.step !== undefined) { const index = Number(button.dataset.step);
+    if (index === progress) { state = decide(state, walks[selected].steps[index]); progress++; } }
+  else if (button.dataset.action) state = decide(state, button.dataset.action);
+  render();
+});
+render();
+</script>
+</html>
