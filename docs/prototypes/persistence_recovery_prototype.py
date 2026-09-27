@@ -93,7 +93,7 @@ class Store:
         return folder
 
     def save(self, changes: dict[str, bytes], expected: dict[str, str | None],
-             fault: str | None = None, legacy_race=None) -> str:
+             fault: str | None = None, legacy_race=None, late_legacy_race=None) -> str:
         """Journal before applying; recover rolls forward only if inputs still match."""
         if list(self.pending.iterdir()):
             raise RuntimeError("recover pending operation before new edits")
@@ -127,6 +127,8 @@ class Store:
                 self.preserve_conflict(entry["path"].replace("/", "__"),
                                        (operation / f"{index}.after").read_bytes(), current)
                 return "conflict: both copies retained; book paused"
+            if late_legacy_race and index == 0:
+                late_legacy_race(path)  # The unavoidable legacy compare/rename race.
             replace_durable(path, (operation / f"{index}.after").read_bytes(),
                             fault=fault == "before_replace")
             if fault == f"after_replace_{index + 1}":
@@ -226,7 +228,7 @@ class Store:
         restored = self.recovery / f"recovered-{label}"
         if restored.exists():
             raise FileExistsError(restored)
-        restored.mkdir()
+        content = {}
         with zipfile.ZipFile(archive_path) as archive:
             manifest = json.loads(archive.read("manifest.json"))
             for name, expected in manifest["files"].items():
@@ -236,7 +238,16 @@ class Store:
                 data = archive.read(name)
                 if digest(data) != expected:
                     raise ValueError("corrupt snapshot")
+                if path.suffix == ".json":
+                    json.loads(data)
+                content[path] = data
+        restored.mkdir()
+        try:
+            for path, data in content.items():
                 replace_durable(restored / path, data)
+        except Exception:
+            shutil.rmtree(restored)
+            raise
         return restored
 
 
@@ -303,6 +314,12 @@ def main() -> None:
         scenario("observed external change preserves both versions",
                  outcome.startswith("conflict") and checked(chapter) == b"<p>Pocket edit</p>" and
                  (store.conflicts / "book-synthetic__chapters__chapter-1.html" / "local").read_bytes() == local)
+        late_result = store.save(
+            {"book-synthetic/chapters/chapter-1.html": b"<p>Native replacement</p>"},
+            {"book-synthetic/chapters/chapter-1.html": digest(checked(chapter))},
+            late_legacy_race=lambda path: replace_durable(path, b"<p>Uncooperative late edit</p>"))
+        scenario("late legacy race can overwrite an unseen edit",
+                 late_result == "saved" and checked(chapter) == b"<p>Native replacement</p>")
         try:
             checked(book / "chapters" / "missing.html")
         except FileNotFoundError:

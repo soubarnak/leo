@@ -22,7 +22,7 @@ This uses [Qt `QSaveFile`](https://doc.qt.io/qt-6/qsavefile.html) only if its di
 
 ## Fixture observations
 
-The command prints each checked scenario. Its synthetic `NEO Library` contains `library.json`-style metadata, chapter HTML, unknown asset, generated export, and legacy backup. It demonstrates failed single-file replacement, interruptions after journal preparation and after each replacement, safe replay, blocked replay when synchronization changes a file, observed conflict preservation, distinct missing and corrupt input, changed-only daily archives, failed archive handling, optional drive failure, hourly due checks across sixteen simulated UTC days, fourteen-archive retention, failed safety snapshot, and separate restoration. The proof cleans its temporary directory after running.
+The command prints each checked scenario. Its synthetic `NEO Library` contains `library.json`, book metadata, chapter HTML, unknown asset, generated export, and legacy backup. It demonstrates failed single-file replacement, interruptions after journal preparation and after each replacement, safe replay, blocked replay when synchronization changes a file, observed conflict preservation, an unseen late legacy write that the native replacement overwrites, distinct missing and corrupt input, changed-only daily archives, failed archive handling, optional drive failure, hourly due checks across sixteen simulated UTC days, fourteen-archive retention, failed safety snapshot, and separate restoration. The proof cleans its temporary directory after running.
 
 ## Limits and implementation gates
 
