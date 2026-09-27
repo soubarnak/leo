@@ -3,6 +3,9 @@
 #include <QPdfWriter>
 #include <QTextBlock>
 #include <QTextFragment>
+#include <QTextBoundaryFinder>
+#include <QSyntaxHighlighter>
+#include <QAccessible>
 #include <QXmlStreamReader>
 #include <functional>
 #include <stdexcept>
@@ -139,10 +142,13 @@ QString fixture() {
 struct Snapshot { QStringList chapters; Object meta; QJsonArray darlings, stickies; int chapter, pos, anchor; };
 class Editor : public QTextEdit {
 public:
+    QMimeData *selectionMimeForProbe() const { return createMimeDataFromSelection(); }
     std::function<void(std::function<void()>)> transaction;
     std::function<void()> enter, undoAction, redoAction;
     bool composing = false;
     std::function<void(const QString&)> resolveSticky;
+    std::function<Object(const QString&)> stickyRecord;
+    std::function<void(Object)> addSticky;
     std::function<bool()> chapterBackspace;   // window-level chapter gestures (empty delete / swallow / merge)
     // A writing operation promotes outline text; merely previewing an IME
     // composition, copying, selecting or navigating must not change the book.
@@ -201,6 +207,42 @@ public:
         setTextCursor(caret);
         if (hasClass(a, "ph-mark") && a.contains("data-sid") && resolveSticky) resolveSticky(a["data-sid"].toString());
     }
+    QSet<QString> selectedMarkers() const {
+        QSet<QString> ids;
+        auto c=textCursor();
+        if (!c.hasSelection()) return ids;
+        for (auto b=document()->findBlock(c.selectionStart()); b.isValid() && b.position()<c.selectionEnd(); b=b.next())
+            for (auto it=b.begin();!it.atEnd();++it) {
+                auto f=it.fragment();
+                if (f.isValid() && f.position()<c.selectionEnd() && f.position()+f.length()>c.selectionStart()) {
+                    auto a=attrs(f.charFormat());
+                    if (hasClass(a,"ph-mark") && a.contains("data-sid")) ids.insert(a["data-sid"].toString());
+                }
+            }
+        return ids;
+    }
+    bool markerExists(const QString &id) const {
+        for (auto b=document()->begin();b.isValid();b=b.next())
+            for (auto it=b.begin();!it.atEnd();++it) {
+                auto f=it.fragment();
+                if (f.isValid() && attrs(f.charFormat())["data-sid"].toString()==id) return true;
+            }
+        return false;
+    }
+    QMimeData *createMimeDataFromSelection() const override {
+        auto mime=new QMimeData;
+        auto selected=textCursor();
+        if (!selected.hasSelection()) return mime;
+        QTextDocument fragment;
+        QTextCursor out(&fragment); out.insertFragment(QTextDocumentFragment(selected));
+        QString html=encode(&fragment);
+        QJsonArray records;
+        for (const auto &id : selectedMarkers()) if (stickyRecord) records.append(stickyRecord(id));
+        mime->setText(selected.selectedText().replace(QChar::ParagraphSeparator,'\n'));
+        mime->setHtml(html);
+        mime->setData("application/x-leo-probe-fragment",QJsonDocument(Object{{"html",html},{"stickies",records}}).toJson());
+        return mime;
+    }
     void keyPressEvent(QKeyEvent *e) override {
         if (composing) { QTextEdit::keyPressEvent(e); return; }
         if (e->matches(QKeySequence::Undo)) { undoAction(); return; }
@@ -215,6 +257,7 @@ public:
             if (target >= 0) { transaction([&] { deleteMarkerAt(target); }); return; }
         }
         transaction([&] {
+            auto selected=selectedMarkers();
             bool typing = !e->text().isEmpty() && e->text()[0].isPrint() &&
                 (!(e->modifiers() & (Qt::ControlModifier|Qt::MetaModifier)) ||
                  ((e->modifiers() & Qt::ControlModifier) && (e->modifiers() & Qt::AltModifier)));
@@ -222,6 +265,7 @@ public:
                 (e->matches(QKeySequence::Cut) && textCursor().hasSelection());
             if(editing) prepareInput(textCursor());
             QTextEdit::keyPressEvent(e);
+            if(editing && resolveSticky) for (const auto &id : selected) if(!markerExists(id)) resolveSticky(id);
         });
     }
     void inputMethodEvent(QInputMethodEvent *e) override {
@@ -241,15 +285,76 @@ public:
         composing = !e->preeditString().isEmpty();
     }
     void insertFromMimeData(const QMimeData *m) override {
+        if(m->hasFormat("application/x-leo-probe-fragment")) {
+            auto payload=QJsonDocument::fromJson(m->data("application/x-leo-probe-fragment")).object();
+            QString html=payload["html"].toString();
+            QJsonArray records=payload["stickies"].toArray();
+            QJsonArray remapped;
+            QSet<QString> newIds;
+            for (auto record : records) {
+                auto sticky=record.toObject(); QString oldId=sticky["id"].toString();
+                if(oldId.isEmpty()) return;
+                QString newId="s-"+QUuid::createUuid().toString(QUuid::WithoutBraces);
+                html.replace("data-sid=\""+esc(oldId)+"\"","data-sid=\""+newId+"\"");
+                sticky["id"]=newId; remapped.append(sticky); newIds.insert(newId);
+            }
+            QTextDocument fragment;
+            try { decode(&fragment,html); } catch(...) { return; }
+            QSet<QString> found;
+            for(auto block=fragment.begin();block.isValid();block=block.next())
+                for(auto it=block.begin();!it.atEnd();++it) {
+                    auto part=it.fragment(); if(!part.isValid()) continue;
+                    auto a=attrs(part.charFormat());
+                    if(hasClass(a,"ph-mark")) {
+                        auto id=a["data-sid"].toString();
+                        if(!newIds.contains(id) || found.contains(id)) return;
+                        found.insert(id);
+                    }
+                }
+            if(found!=newIds) return;
+            transaction([&] {
+                auto removed=selectedMarkers();
+                prepareInput(textCursor());
+                auto c=textCursor();c.insertFragment(QTextDocumentFragment(&fragment));setTextCursor(c);
+                if(addSticky) for (auto record : remapped) addSticky(record.toObject());
+                if(resolveSticky) for (const auto &id : removed) if(!markerExists(id)) resolveSticky(id);
+            });
+            return;
+        }
         if(m->text().isEmpty()) return;
-        transaction([&] { prepareInput(textCursor()); auto c = textCursor(); c.insertText(m->text(), QTextCharFormat()); setTextCursor(c); });
+        transaction([&] { auto removed=selectedMarkers(); prepareInput(textCursor()); auto c = textCursor(); c.insertText(m->text(), QTextCharFormat()); setTextCursor(c); if(resolveSticky) for(const auto &id:removed) if(!markerExists(id)) resolveSticky(id); });
+    }
+};
+// Display-only decoration: entering the first paragraph restores ordinary text metrics.
+class DropCap : public QSyntaxHighlighter {
+    Editor *edit;
+public:
+    explicit DropCap(Editor *editor) : QSyntaxHighlighter(editor->document()), edit(editor) {
+        QObject::connect(edit,&QTextEdit::cursorPositionChanged,this,[this] { rehighlightBlock(document()->firstBlock()); });
+    }
+protected:
+    void highlightBlock(const QString &text) override {
+        if(currentBlock().blockNumber()!=0 || edit->textCursor().blockNumber()==0 || text.isEmpty()) return;
+        int start=0;
+        while(start<text.size() && text[start].isSpace()) ++start;
+        if(start==text.size()) return;
+        QTextBoundaryFinder boundary(QTextBoundaryFinder::Grapheme,text);
+        boundary.setPosition(start);
+        int end=boundary.toNextBoundary();
+        if(end<=start) return;
+        QTextCharFormat display;
+        display.setFontPointSize(edit->font().pointSizeF()*2.7);
+        setFormat(start,end-start,display);
     }
 };
 class Window : public QMainWindow {
 public:
     Editor *edit = new Editor;
+    DropCap *dropCap = nullptr;
     QPlainTextEdit *state = new QPlainTextEdit;
     QComboBox *chapters = new QComboBox;
+    QLineEdit *search = new QLineEdit;
+    QLineEdit *replacement = new QLineEdit;
     QStringList content;
     Object meta;
     QJsonArray darlings, stickies;
@@ -268,10 +373,15 @@ public:
         button("Reset fixture",[&]{reset();}); button("Undo",[&]{undo();}); button("Redo",[&]{redo();});
         button("Darling fixture",[&]{darlingFixture();}); button("Cut Darling",[&]{cut();}); button("Restore Darling",[&]{restore();});
         button("Save / reopen",[&]{saveReopen();}); button("PDF",[&]{pdf();});
+        search->setPlaceholderText("Find prose"); replacement->setPlaceholderText("Replace with");
+        search->setAccessibleName("Find prose"); replacement->setAccessibleName("Replacement text");
+        row->addWidget(search); row->addWidget(replacement);
+        button("Replace all",[&]{replaceAll(search->text(),replacement->text());});
         auto splitter = new QSplitter; layout->addWidget(splitter,1); splitter->addWidget(edit); splitter->addWidget(state);
         splitter->setSizes({720,480}); state->setReadOnly(true); state->setAccessibleName("Serialized probe state");
         edit->setAccessibleName("Synthetic manuscript"); edit->setFont(QFont("serif",16)); edit->setUndoRedoEnabled(false);
         edit->setAcceptRichText(false); edit->setContextMenuPolicy(Qt::NoContextMenu);
+        dropCap=new DropCap(edit);
         setCentralWidget(main);
         edit->transaction = [&](auto action){ tx(action); };
         edit->enter = [&]{ tx([&]{enter();}, true); };
@@ -279,6 +389,14 @@ public:
         edit->resolveSticky = [&](const QString &sid) {
             for (int i = 0; i < stickies.size(); ++i)
                 if (stickies[i].toObject()["id"].toString() == sid) { stickies.removeAt(i); break; }
+        };
+        edit->stickyRecord = [&](const QString &sid) {
+            for (auto sticky : stickies) if (sticky.toObject()["id"].toString()==sid) return sticky.toObject();
+            return Object{{"id",sid},{"text",""},{"resolved",false}};
+        };
+        edit->addSticky = [&](Object sticky) {
+            sticky["chapterId"]=meta["chapterOrder"].toArray()[current];
+            stickies.append(sticky);
         };
         edit->chapterBackspace = [&]{ return chapterBackspace(); };
         connect(chapters,qOverload<int>(&QComboBox::currentIndexChanged),this,[&](int i){
@@ -444,6 +562,47 @@ public:
             edit->setTextCursor(c); darlings.removeLast();
         });
     }
+    int replaceAll(const QString &needle, const QString &value) {
+        if (needle.isEmpty()) return 0;
+        int changed = 0;
+        tx([&] {
+            sync();
+            for (int chapter = 0; chapter < content.size(); ++chapter) {
+                QTextDocument doc;
+                decode(&doc, content[chapter]);
+                QList<QPair<int,QTextCharFormat>> matches;
+                for (auto block = doc.begin(); block.isValid(); block = block.next()) {
+                    auto blockAttrs = attrs(block.blockFormat());
+                    if (hasClass(blockAttrs,"scene-break") || hasClass(blockAttrs,"ghost")) continue;
+                    for (auto it = block.begin(); !it.atEnd(); ++it) {
+                        auto fragment = it.fragment();
+                        if (!fragment.isValid() || isMarkerFormat(fragment.charFormat())) continue;
+                        const QString text = fragment.text();
+                        int from = 0;
+                        while (from < text.size()) {
+                            int at = text.indexOf(needle,from,Qt::CaseInsensitive);
+                            if (at < 0) break;
+                            matches.append({fragment.position()+at,fragment.charFormat()});
+                            from = at + needle.size();
+                        }
+                    }
+                }
+                for (int i = matches.size()-1; i >= 0; --i) {
+                    QTextCursor cursor(&doc);
+                    cursor.setPosition(matches[i].first);
+                    cursor.setPosition(matches[i].first+needle.size(),QTextCursor::KeepAnchor);
+                    cursor.insertText(value,matches[i].second);
+                }
+                if (!matches.isEmpty()) {
+                    changed += matches.size();
+                    content[chapter] = encode(&doc);
+                }
+            }
+            if (changed) render();
+        });
+        statusBar()->showMessage(QString("Replaced %1 prose match(es); markers, scene breaks and ghost prompts skipped").arg(changed));
+        return changed;
+    }
     void write(QString path,QByteArray bytes) {
         QSaveFile f(path); if(!f.open(QIODevice::WriteOnly)||f.write(bytes)!=bytes.size()||!f.commit()) throw std::runtime_error("Scratch write failed");
     }
@@ -607,6 +766,51 @@ int main(int argc,char **argv) {
         w.current=0; w.render();
         c=w.edit->textCursor();c.setPosition(0);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
         check("a ghost prompt counts as content, so Backspace at its start does not delete the chapter",w.content.size()==2 && orderSize()==2);
+        w.reset();
+        auto beforeReplace=w.data();
+        check("replace-all changes prose and skips ghost prompts",w.replaceAll("prose","story")==1 && w.content[0].contains("Centered story.") && w.content[0].contains("class=\"ghost\"") && w.content[0].contains("prompt with prose."));
+        check("replace-all preserves placeholder and sticky",findMarker()>=0 && w.stickies.size()==1);
+        w.undo(); check("replace-all is one structural undo",w.data()==beforeReplace);
+        check("replace-all with no match adds no history",w.replaceAll("absent phrase","new phrase")==0 && w.data()==beforeReplace && w.history.isEmpty());
+        chapters({"<p><b>Alpha</b> beta.</p>","<p>ALPHA again.</p>"});
+        auto beforeMultiReplace=w.data();
+        check("replace-all crosses chapters and preserves emphasis",w.replaceAll("alpha","Delta")==2 && w.content[0].contains("<b>Delta</b>") && w.content[1].contains("Delta again."));
+        w.undo(); check("undo restores every replaced chapter",w.data()==beforeMultiReplace);
+        w.reset();
+        auto beforeClipboard=w.data();
+        int copyMarker=findMarker();
+        c=w.edit->textCursor();c.setPosition(copyMarker);c.setPosition(copyMarker+1,QTextCursor::KeepAnchor);w.edit->setTextCursor(c);
+        QScopedPointer<QMimeData> internalCopy(w.edit->selectionMimeForProbe());
+        check("copying placeholder preserves rich fragment and does not edit book",internalCopy->hasFormat("application/x-leo-probe-fragment") && w.data()==beforeClipboard);
+        c=w.edit->textCursor();c.setPosition(copyMarker+2);w.edit->setTextCursor(c);
+        w.edit->insertFromMimeData(internalCopy.data());
+        check("rich paste duplicates placeholder with a distinct sticky",w.stickies.size()==2 && w.stickies[0].toObject()["id"]!=w.stickies[1].toObject()["id"] && w.stickies[1].toObject()["text"]=="Synthetic sticky");
+        w.undo(); check("rich paste and sticky duplication undo together",w.data()==beforeClipboard);
+        QMimeData malformedCopy;
+        malformedCopy.setData("application/x-leo-probe-fragment",QJsonDocument(Object{{"html","<p><span class=\"ph-mark\" data-sid=\"orphan\">⚑</span></p>"},{"stickies",QJsonArray{}}}).toJson());
+        w.edit->insertFromMimeData(&malformedCopy);
+        check("marker-bearing clipboard without sticky record is refused",w.data()==beforeClipboard && w.stickies.size()==1);
+        c=w.edit->textCursor();c.setPosition(copyMarker);c.setPosition(copyMarker+1,QTextCursor::KeepAnchor);w.edit->setTextCursor(c);press(Qt::Key_Delete);
+        check("selected placeholder deletion removes its sticky",findMarker()==-1 && w.stickies.isEmpty());
+        w.undo(); check("selected deletion undo restores placeholder and sticky",w.data()==beforeClipboard);
+        c=w.edit->textCursor();c.setPosition(copyMarker);c.setPosition(copyMarker+1,QTextCursor::KeepAnchor);w.edit->setTextCursor(c);
+        QMimeData externalText;externalText.setText("replacement");w.edit->insertFromMimeData(&externalText);
+        check("plain paste over selected placeholder removes its sticky",findMarker()==-1 && w.stickies.isEmpty() && w.edit->toPlainText().contains("replacement"));
+        w.undo(); check("plain paste over placeholder undoes with sticky",w.data()==beforeClipboard);
+        w.reset();
+        auto beforeCap=w.data();
+        c=w.edit->textCursor();c.movePosition(QTextCursor::End);w.edit->setTextCursor(c);app.processEvents();
+        auto visualFormats=w.edit->document()->firstBlock().layout()->formats();
+        bool capShown=false;
+        for(const auto &range:visualFormats) if(range.format.fontPointSize()>w.edit->font().pointSizeF()) capShown=true;
+        check("first grapheme has display-only drop cap outside opening paragraph",capShown && w.data()==beforeCap);
+        c=w.edit->textCursor();c.setPosition(2);w.edit->setTextCursor(c);app.processEvents();
+        visualFormats=w.edit->document()->firstBlock().layout()->formats();
+        bool capHidden=true;
+        for(const auto &range:visualFormats) if(range.format.fontPointSize()>w.edit->font().pointSizeF()) capHidden=false;
+        check("drop cap steps aside while editing first paragraph",capHidden && w.data()==beforeCap);
+        auto accessible=QAccessible::queryAccessibleInterface(w.edit);
+        check("editor exposes named editable text to Qt accessibility",accessible && accessible->role()==QAccessible::EditableText && accessible->text(QAccessible::Name)=="Synthetic manuscript" && accessible->textInterface());
         w.reset();
         w.pdf();w.show();app.processEvents();w.grab().save(out+"/window.png");
         log<<"Platform: "<<QGuiApplication::platformName()<<"; Qt "<<qVersion()<<"; artifacts "<<out<<Qt::endl;

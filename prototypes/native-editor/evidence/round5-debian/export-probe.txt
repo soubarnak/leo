@@ -1,0 +1,20 @@
+Host: Debian testing forky/sid, XFCE/X11; Qt 6.10.2; Pango 1.58.0; Cairo 1.18.4.
+Synthetic content only. No real library, paid service or mail used.
+
+Font experiment:
+- apt download fonts-noto-core=20201225-6 fonts-noto-color-emoji=2.051-1; extract to /tmp/leo-font-probe/extracted.
+- Set FONTCONFIG_FILE=/tmp/leo-font-probe/fonts.conf; the config includes /etc/fonts/fonts.conf and adds the extracted font directory.
+- No package installed to the host. The temporary font tree is not in this branch.
+
+Qt QTextDocument::print()/QPdfWriter fixture, evidence/round5-debian/qt-with-noto.pdf:
+- A5, 10 pages, default Qt margins/page numbers; not the baseline A4 export contract.
+- Bengali and Arabic render with fallback fonts. Emoji sequence is absent in the rendered PDF and from pdftotext output.
+- Earlier no-Noto A5 sample had 11 pages with missing glyphs, showing pagination depends on font selection.
+
+Native Pango/Cairo probe, run-pdf-pango:
+- A4, seven pages, 1-inch margins, synthetic title/chapter, 80 repeated paragraphs, emphasis, Bengali, Arabic, emoji and page numbers.
+- pdfinfo reports 595.28 x 841.89 pt. pdftotext extracts the emoji sequence; visual inspection confirms it renders.
+- Arabic is visible, but pdftotext spacing/order differs from source in mixed-script lines. Unicode extraction needs dedicated acceptance tests.
+- This bounded probe does not implement NEO's cover/title layout, full paragraph rules, all export formats, or exact pagination parity.
+
+Reference: Chromium 153 headless printed a one-paragraph synthetic HTML comparison with the same scratch Noto fonts. It rendered and extracted the emoji. This supports treating Qt's missing emoji as a PDF-path limitation, not absent source text. The comparison is not a full NEO export.

@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+out=${1:-/tmp/leo-pango-PROTOTYPE.pdf}
+c++ -std=c++17 "$here/pdf-pango.cpp" $(pkg-config --cflags --libs pangocairo cairo) -o /tmp/leo-pango-PROTOTYPE
+exec /tmp/leo-pango-PROTOTYPE "$out"
