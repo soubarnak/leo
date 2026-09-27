@@ -143,6 +143,7 @@ public:
     std::function<void()> enter, undoAction, redoAction;
     bool composing = false;
     std::function<void(const QString&)> resolveSticky;
+    std::function<bool()> chapterBackspace;   // window-level chapter gestures (empty delete / swallow / merge)
     // A writing operation promotes outline text; merely previewing an IME
     // composition, copying, selecting or navigating must not change the book.
     void prepareInput(QTextCursor affected) {
@@ -209,6 +210,7 @@ public:
             bool back = e->key() == Qt::Key_Backspace;
             auto brk = sceneBreakTarget(back);
             if (brk.isValid()) { transaction([&] { removeSceneBreak(brk); }); return; }
+            if (back && chapterBackspace && chapterBackspace()) return;
             int target = markerTarget(back);
             if (target >= 0) { transaction([&] { deleteMarkerAt(target); }); return; }
         }
@@ -278,6 +280,7 @@ public:
             for (int i = 0; i < stickies.size(); ++i)
                 if (stickies[i].toObject()["id"].toString() == sid) { stickies.removeAt(i); break; }
         };
+        edit->chapterBackspace = [&]{ return chapterBackspace(); };
         connect(chapters,qOverload<int>(&QComboBox::currentIndexChanged),this,[&](int i){
             if (busy || i < 0) return; sync(); current=i; render(); run=0;
         });
@@ -344,6 +347,55 @@ public:
             if(nextHtml.contains("data-sid=\""+sticky["id"].toString()+"\"")) {sticky["chapterId"]=newId;stickies[i]=sticky;}
         }
         ++current; render(); run=0;
+    }
+    QString chapterPlain(const QString &html) {
+        QTextDocument d; decode(&d, html);
+        QString t = d.toPlainText(); t.remove(QChar::ParagraphSeparator); t.remove(QChar::LineSeparator);
+        return t.trimmed();
+    }
+    void deleteChapterQuiet(int idx) {
+        if (idx < 0 || idx >= content.size()) return;
+        QString id = meta["chapterOrder"].toArray()[idx].toString();
+        content.removeAt(idx);
+        auto order = meta["chapterOrder"].toArray(); order.removeAt(idx); meta["chapterOrder"] = order;
+        auto sections = meta["sectionNotes"].toObject(); sections.remove(id); meta["sectionNotes"] = sections;
+        for (int i = stickies.size() - 1; i >= 0; --i) if (stickies[i].toObject()["chapterId"].toString() == id) stickies.removeAt(i);
+        current = qBound(0, current > idx ? current - 1 : current, content.size() - 1);
+    }
+    bool chapterBackspace() {
+        auto c = edit->textCursor();
+        if (c.hasSelection()) return false;
+        QString t = edit->toPlainText(); t.remove(QChar::ParagraphSeparator); t.remove(QChar::LineSeparator);
+        if (t.trimmed().isEmpty() && content.size() >= 2) {
+            tx([&]{
+                deleteChapterQuiet(current); render();
+                auto caret = edit->textCursor(); caret.setPosition(0); edit->setTextCursor(caret);
+            });
+            return true;
+        }
+        if (c.position() != 0 || current <= 0) return false;
+        int prev = current - 1;
+        QString prevId = meta["chapterOrder"].toArray()[prev].toString(), curId = meta["chapterOrder"].toArray()[current].toString();
+        if (chapterPlain(content[prev]).isEmpty()) {
+            tx([&]{
+                deleteChapterQuiet(prev); render();
+                auto caret = edit->textCursor(); caret.setPosition(0); edit->setTextCursor(caret);
+            });
+        } else {
+            QTextDocument prevDoc; decode(&prevDoc, content[prev]); int prevBlocks = prevDoc.blockCount();
+            tx([&]{
+                content[prev] = content[prev] + content[current];
+                for (int i = 0; i < stickies.size(); ++i) { auto o = stickies[i].toObject(); if (o["chapterId"].toString() == curId) { o["chapterId"] = prevId; stickies[i] = o; } }
+                for (int i = 0; i < darlings.size(); ++i) { auto o = darlings[i].toObject(); if (o["chapterId"].toString() == curId) { o["chapterId"] = prevId; darlings[i] = o; } }
+                auto sections = meta["sectionNotes"].toObject();
+                QJsonArray merged = sections[prevId].toArray();
+                for (auto v : sections[curId].toArray()) merged.append(v);
+                sections[prevId] = merged; sections.remove(curId); meta["sectionNotes"] = sections;
+                deleteChapterQuiet(current); render();
+                auto caret = edit->textCursor(); caret.setPosition(edit->document()->findBlockByNumber(prevBlocks).position()); edit->setTextCursor(caret);
+            });
+        }
+        return true;
     }
     void darlingFixture() {
         reset();
@@ -531,6 +583,30 @@ int main(int argc,char **argv) {
         c=w.edit->textCursor();c.setPosition(sectionBlock.position()+sectionBlock.length()-1);w.edit->setTextCursor(c);press(Qt::Key_Delete);
         check("Delete above a scene break removes the break and keeps the prose",breaks()==beforeBreaks-1 && w.edit->toPlainText().contains("Centered prose.") && w.content[0].contains("text-align:center"));
         w.undo(); check("undo after Delete above the break restores the fixture",breaks()==beforeBreaks && w.data()==markerData);
+        auto chapters=[&](QStringList texts){ w.content=texts; QJsonArray ids; for(int i=0;i<texts.size();++i) ids.append(QString("ch-%1").arg(i+1)); w.meta["chapterOrder"]=ids; w.current=texts.size()-1; w.render(); };
+        auto orderSize=[&]{return w.meta["chapterOrder"].toArray().size();};
+        chapters({"<p>Alpha paragraph.</p>","<p><br/></p>"});
+        auto twoChapters=w.data();
+        c=w.edit->textCursor();c.setPosition(0);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("Backspace in an empty chapter deletes it and lands in the previous chapter",w.content.size()==1 && orderSize()==1 && w.current==0 && w.content[0].contains("Alpha paragraph."));
+        w.undo(); check("undo restores the deleted empty chapter",w.data()==twoChapters);
+        chapters({"<p><br/></p>","<p>Second chapter prose.</p>"});
+        c=w.edit->textCursor();c.setPosition(0);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("Backspace at a chapter start swallows an empty chapter above",w.content.size()==1 && orderSize()==1 && w.current==0 && w.content[0].contains("Second chapter prose."));
+        w.undo(); check("undo restores the swallowed empty chapter",w.content.size()==2 && w.current==1);
+        chapters({"<p>Alpha paragraph.</p>","<p>Beta paragraph.</p>"});
+        w.meta["sectionNotes"]=Object{{"ch-1",QJsonArray{Object{{"id","sec-a"},{"text","Alpha note"}}}},{"ch-2",QJsonArray{Object{{"id","sec-b"},{"text","Beta note"}}}}};
+        w.stickies=QJsonArray{Object{{"id","sticky-b"},{"chapterId","ch-2"},{"text","Beta sticky"},{"resolved",false}}};
+        auto beforeMerge=w.data();
+        c=w.edit->textCursor();c.setPosition(0);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("Backspace at a chapter start merges into the previous chapter",w.content.size()==1 && orderSize()==1 && w.current==0 && w.content[0]=="<p>Alpha paragraph.</p><p>Beta paragraph.</p>");
+        check("merge moves section notes and stickies into the surviving chapter",w.meta["sectionNotes"].toObject()["ch-1"].toArray().size()==2 && !w.meta["sectionNotes"].toObject().contains("ch-2") && w.stickies.size()==1 && w.stickies[0].toObject()["chapterId"].toString()=="ch-1");
+        check("caret lands at the merge point",w.edit->textCursor().position()==w.edit->document()->findBlockByNumber(1).position());
+        w.undo(); check("undo restores both chapters after a merge",w.data()==beforeMerge);
+        chapters({"<p class=\"ghost\" data-sec-id=\"section-ghost\">Replace this outline prompt with prose.</p>","<p>Kept prose.</p>"});
+        w.current=0; w.render();
+        c=w.edit->textCursor();c.setPosition(0);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("a ghost prompt counts as content, so Backspace at its start does not delete the chapter",w.content.size()==2 && orderSize()==2);
         w.reset();
         w.pdf();w.show();app.processEvents();w.grab().save(out+"/window.png");
         log<<"Platform: "<<QGuiApplication::platformName()<<"; Qt "<<qVersion()<<"; artifacts "<<out<<Qt::endl;
