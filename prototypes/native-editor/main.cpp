@@ -18,6 +18,16 @@ QString attributes(const Object &a) {
 }
 Object attrs(const QTextFormat &f) { return f.property(Attrs).toJsonObject(); }
 bool hasClass(Object a, QString name) { return a["class"].toString().split(' ').contains(name); }
+QTextFragment fragmentAt(QTextDocument *doc, int pos) {
+    QTextBlock b = doc->findBlock(pos);
+    if (!b.isValid()) return QTextFragment();
+    for (auto it = b.begin(); !it.atEnd(); ++it) {
+        auto f = it.fragment();
+        if (f.isValid() && pos >= f.position() && pos < f.position() + f.length()) return f;
+    }
+    return QTextFragment();
+}
+bool isMarkerFormat(const QTextCharFormat &f) { auto a = attrs(f); return hasClass(a, "ph-mark") || hasClass(a, "darling-anchor"); }
 QString encode(QTextDocument *doc, bool exporting = false) {
     QString html;
     QSet<QString> ghosts;
@@ -132,6 +142,7 @@ public:
     std::function<void(std::function<void()>)> transaction;
     std::function<void()> enter, undoAction, redoAction;
     bool composing = false;
+    std::function<void(const QString&)> resolveSticky;
     // A writing operation promotes outline text; merely previewing an IME
     // composition, copying, selecting or navigating must not change the book.
     void prepareInput(QTextCursor affected) {
@@ -147,11 +158,60 @@ public:
         auto c=textCursor();
         if(!c.hasSelection()) {auto f=c.charFormat();f.clearProperty(Attrs);c.setCharFormat(f);setTextCursor(c);}
     }
+    QTextBlock sceneBreakTarget(bool back) {
+        auto c = textCursor();
+        if (c.hasSelection()) return QTextBlock();
+        auto b = c.block();
+        if (back) {
+            if (c.position() != b.position()) return QTextBlock();
+            auto prev = b.previous();
+            return (prev.isValid() && hasClass(attrs(prev.blockFormat()), "scene-break")) ? prev : QTextBlock();
+        }
+        if (c.position() != b.position() + b.length() - 1) return QTextBlock();
+        auto next = b.next();
+        return (next.isValid() && hasClass(attrs(next.blockFormat()), "scene-break")) ? next : QTextBlock();
+    }
+    void removeSceneBreak(QTextBlock brk) {
+        auto doc = document();
+        auto next = brk.next();
+        if (!next.isValid()) return;
+        int start = brk.position();
+        QTextBlockFormat nextFormat = next.blockFormat();
+        QTextCursor c(doc);
+        c.beginEditBlock(); c.setPosition(start); c.setPosition(next.position(), QTextCursor::KeepAnchor); c.removeSelectedText(); c.endEditBlock();
+        QTextCursor fix(doc); fix.setPosition(start); fix.setBlockFormat(nextFormat);
+        auto cf = fix.charFormat(); cf.clearProperty(Attrs); fix.setCharFormat(cf);
+        setTextCursor(fix);
+    }
+    int markerTarget(bool back) {
+        auto c = textCursor();
+        if (c.hasSelection()) return -1;
+        int target = back ? c.position() - 1 : c.position();
+        if (target < 0) return -1;
+        auto f = fragmentAt(document(), target);
+        return (f.isValid() && isMarkerFormat(f.charFormat())) ? target : -1;
+    }
+    void deleteMarkerAt(int target) {
+        auto f = fragmentAt(document(), target);
+        auto a = f.isValid() ? attrs(f.charFormat()) : Object();
+        QTextCursor del(document()); del.setPosition(target); del.setPosition(target + 1, QTextCursor::KeepAnchor); del.removeSelectedText();
+        QTextCursor caret(document()); caret.setPosition(qMin(target, document()->characterCount() - 1));
+        auto cf = caret.charFormat(); cf.clearProperty(Attrs); caret.setCharFormat(cf);
+        setTextCursor(caret);
+        if (hasClass(a, "ph-mark") && a.contains("data-sid") && resolveSticky) resolveSticky(a["data-sid"].toString());
+    }
     void keyPressEvent(QKeyEvent *e) override {
         if (composing) { QTextEdit::keyPressEvent(e); return; }
         if (e->matches(QKeySequence::Undo)) { undoAction(); return; }
         if (e->matches(QKeySequence::Redo)) { redoAction(); return; }
         if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) && e->modifiers() == Qt::NoModifier && !textCursor().hasSelection()) { enter(); return; }
+        if ((e->key() == Qt::Key_Backspace || e->key() == Qt::Key_Delete) && e->modifiers() == Qt::NoModifier && !textCursor().hasSelection()) {
+            bool back = e->key() == Qt::Key_Backspace;
+            auto brk = sceneBreakTarget(back);
+            if (brk.isValid()) { transaction([&] { removeSceneBreak(brk); }); return; }
+            int target = markerTarget(back);
+            if (target >= 0) { transaction([&] { deleteMarkerAt(target); }); return; }
+        }
         transaction([&] {
             bool typing = !e->text().isEmpty() && e->text()[0].isPrint() &&
                 (!(e->modifiers() & (Qt::ControlModifier|Qt::MetaModifier)) ||
@@ -214,6 +274,10 @@ public:
         edit->transaction = [&](auto action){ tx(action); };
         edit->enter = [&]{ tx([&]{enter();}, true); };
         edit->undoAction = [&]{undo();}; edit->redoAction = [&]{redo();};
+        edit->resolveSticky = [&](const QString &sid) {
+            for (int i = 0; i < stickies.size(); ++i)
+                if (stickies[i].toObject()["id"].toString() == sid) { stickies.removeAt(i); break; }
+        };
         connect(chapters,qOverload<int>(&QComboBox::currentIndexChanged),this,[&](int i){
             if (busy || i < 0) return; sync(); current=i; render(); run=0;
         });
@@ -443,6 +507,31 @@ int main(int argc,char **argv) {
         w.reset(); auto markerBefore=w.data(); c=w.edit->textCursor(); c.select(QTextCursor::Document); w.edit->setTextCursor(c);
         bool markerRefused=false; try {w.cut();} catch(...) {markerRefused=true;}
         check("multi-paragraph semantic metadata refusal leaves model intact",markerRefused && w.data()==markerBefore);
+        w.reset();
+        auto findMarker=[&]{for(auto b=w.edit->document()->begin();b.isValid();b=b.next())for(auto it=b.begin();!it.atEnd();++it){auto f=it.fragment();if(f.isValid()&&hasClass(attrs(f.charFormat()),"ph-mark"))return f.position();}return -1;};
+        auto blockStart=[&](QString needle){for(auto b=w.edit->document()->begin();b.isValid();b=b.next())if(b.text().contains(needle))return b.position();return -1;};
+        auto breaks=[&]{return w.content[0].count("class=\"scene-break\"");};
+        int mpos=findMarker(); auto markerData=w.data();
+        check("fixture exposes a placeholder and its sticky",mpos>=0 && w.stickies.size()==1);
+        c=w.edit->textCursor();c.setPosition(mpos+1);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("Backspace after a placeholder removes it and resolves the sticky",findMarker()==-1 && w.stickies.isEmpty());
+        w.undo(); check("undo restores the placeholder and its sticky",findMarker()==mpos && w.stickies.size()==1 && w.data()==markerData);
+        c=w.edit->textCursor();c.setPosition(mpos);w.edit->setTextCursor(c);press(Qt::Key_Delete);
+        check("Delete before a placeholder removes it and resolves the sticky",findMarker()==-1 && w.stickies.isEmpty());
+        w.undo(); check("undo after Delete restores the fixture",w.data()==markerData);
+        auto textBefore=w.edit->toPlainText();
+        c=w.edit->textCursor();c.setPosition(mpos+2);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("character deletion beside a placeholder keeps the marker",findMarker()==mpos && w.stickies.size()==1 && w.edit->toPlainText().length()==textBefore.length()-1);
+        w.undo(); check("undo of character deletion restores the text",w.edit->toPlainText()==textBefore && findMarker()==mpos);
+        int centerPos=blockStart("Centered prose."); int beforeBreaks=breaks();
+        c=w.edit->textCursor();c.setPosition(centerPos);w.edit->setTextCursor(c);press(Qt::Key_Backspace);
+        check("Backspace below a scene break removes the break and keeps the prose",breaks()==beforeBreaks-1 && w.edit->toPlainText().contains("Centered prose.") && w.content[0].contains("text-align:center"));
+        w.undo(); check("undo of scene-break removal restores the break",breaks()==beforeBreaks && w.data()==markerData);
+        int sectionPos=blockStart("Written section"); auto sectionBlock=w.edit->document()->findBlock(sectionPos);
+        c=w.edit->textCursor();c.setPosition(sectionBlock.position()+sectionBlock.length()-1);w.edit->setTextCursor(c);press(Qt::Key_Delete);
+        check("Delete above a scene break removes the break and keeps the prose",breaks()==beforeBreaks-1 && w.edit->toPlainText().contains("Centered prose.") && w.content[0].contains("text-align:center"));
+        w.undo(); check("undo after Delete above the break restores the fixture",breaks()==beforeBreaks && w.data()==markerData);
+        w.reset();
         w.pdf();w.show();app.processEvents();w.grab().save(out+"/window.png");
         log<<"Platform: "<<QGuiApplication::platformName()<<"; Qt "<<qVersion()<<"; artifacts "<<out<<Qt::endl;
         return failures?1:0;
