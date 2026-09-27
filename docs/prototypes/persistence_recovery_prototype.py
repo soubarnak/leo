@@ -56,7 +56,7 @@ def checked(path: Path) -> bytes:
     data = read(path)
     if data is None:
         raise FileNotFoundError(f"missing input: {path.name}")
-    if path.suffix == ".json":
+    if path.name in {"library.json", "book.json", "darlings.json", "stickies.json"}:
         try:
             json.loads(data)
         except (UnicodeError, ValueError) as error:
@@ -179,7 +179,7 @@ class Store:
         latest = sorted(self.snapshots.glob("daily-*.zip"))
         if not safety and latest:
             with zipfile.ZipFile(latest[-1]) as archive:
-                previous = json.loads(archive.read("manifest.json"))["fingerprint"]
+                previous = json.loads(archive.read("control/manifest.json"))["fingerprint"]
             if previous == fingerprint:
                 return "unchanged: no new daily snapshot"
         staging = target.with_suffix(".partial")
@@ -188,15 +188,15 @@ class Store:
         try:
             with zipfile.ZipFile(staging, "w", zipfile.ZIP_DEFLATED) as archive:
                 for name, data in source.items():
-                    archive.writestr(name, data)
-                archive.writestr("manifest.json", json.dumps(manifest))
+                    archive.writestr(f"payload/{name}", data)
+                archive.writestr("control/manifest.json", json.dumps(manifest))
             if fault == "partial_archive":
                 raise OSError("injected incomplete archive")
             if {name: digest(data) for name, data in self.inventory().items()} != manifest["files"]:
                 raise RuntimeError("library changed during snapshot")
             with zipfile.ZipFile(staging) as archive:
                 for name, expected in manifest["files"].items():
-                    if digest(archive.read(name)) != expected:
+                    if digest(archive.read(f"payload/{name}")) != expected:
                         raise ValueError("snapshot verification failed")
             with staging.open("rb") as handle:
                 os.fsync(handle.fileno())
@@ -230,15 +230,15 @@ class Store:
             raise FileExistsError(restored)
         content = {}
         with zipfile.ZipFile(archive_path) as archive:
-            manifest = json.loads(archive.read("manifest.json"))
+            manifest = json.loads(archive.read("control/manifest.json"))
             for name, expected in manifest["files"].items():
                 path = Path(name)
                 if path.is_absolute() or ".." in path.parts:
                     raise ValueError("unsafe archive path")
-                data = archive.read(name)
+                data = archive.read(f"payload/{name}")
                 if digest(data) != expected:
                     raise ValueError("corrupt snapshot")
-                if path.suffix == ".json":
+                if path.name in {"library.json", "book.json", "darlings.json", "stickies.json"}:
                     json.loads(data)
                 content[path] = data
         restored.mkdir()
@@ -270,6 +270,7 @@ def main() -> None:
         replace_durable(chapter, b"<p>Original</p>")
         replace_durable(metadata, b'{"title":"Original","unknown":"keep"}')
         replace_durable(book / "extra.bin", b"unknown asset")
+        replace_durable(library / "manifest.json", b"opaque unknown file, not JSON")
         store = Store(library, root / "local-recovery")
 
         try:
@@ -339,6 +340,7 @@ def main() -> None:
         scenario("first daily snapshot includes unknown asset",
                  store.tick("2026-09-01") == "snapshot saved" and
                  "book-synthetic/extra.bin" in store.inventory() and
+                 "manifest.json" in store.inventory() and
                  "Exports/generated.pdf" not in store.inventory() and
                  "Backups/legacy.zip" not in store.inventory())
         scenario("unchanged day does not duplicate snapshot",
@@ -375,6 +377,7 @@ def main() -> None:
         scenario("restore produces separate inspectable library and safety snapshot",
                  checked(chapter) == before and
                  checked(recovered / "book-synthetic" / "chapters" / "chapter-1.html") != before and
+                 checked(recovered / "manifest.json") == b"opaque unknown file, not JSON" and
                  len(list(store.snapshots.glob("safety-*.zip"))) == 1)
         print("LIMIT: A legacy writer may change a file between final hash check and rename.")
         print("LIMIT: Syncthing may expose a mixed multi-file state before operation completes.")
