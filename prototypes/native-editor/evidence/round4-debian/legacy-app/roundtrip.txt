@@ -1,0 +1,13 @@
+PASS the real NEO 0.7.9 desktop application (Electron 43) reopened a native-saved synthetic fixture with markers intact
+PASS an edit inserted through the running application autosaved to the chapter file
+PASS native reimport equals the app-saved canonical HTML exactly (expected == app-saved == native-return)
+PASS unknown book metadata and sticky JSON preserved by the application after it rewrote book.json
+Host: Debian GNU/Linux forky/sid; Electron 43 linux-x64; X11 (xcb); isolated HOME=/tmp/leo-legacy-home
+Method: the app was launched with --remote-debugging-port and driven through the CDP Runtime.evaluate domain
+(document.execCommand('insertText') at the start of the first paragraph, the same edit shape as the DOM harness).
+Only the synthetic book-PROTOTYPE library was opened; no real library, manuscript, AI or email feature was touched.
+Reproduction notes: with a redirected HOME, Electron resolved app.getPath('documents') to $HOME itself,
+so the isolated library must live at $HOME/NEO Library (not $HOME/Documents/NEO Library).
+Also, electron's postinstall download was blocked by the project's allowScripts policy; the binary was fetched by
+running node node_modules/electron/install.js directly.
+Not an Android/Pocket test; not an export-parity test.

@@ -1,0 +1,49 @@
+{
+  "author": "No real manuscript",
+  "chapterOrder": [
+    "ch-one"
+  ],
+  "id": "book-PROTOTYPE",
+  "sectionNotes": {
+    "ch-one": [
+      {
+        "id": "section-written",
+        "text": "Written"
+      },
+      {
+        "id": "section-ghost",
+        "text": "Replace this outline prompt with prose."
+      }
+    ]
+  },
+  "title": "Synthetic native probe",
+  "unknownMetadata": {
+    "nested": [
+      1,
+      "preserve",
+      true
+    ]
+  },
+  "subtitle": "",
+  "series": "",
+  "wordGoal": 0,
+  "created": "2026-09-27T19:33:39.797Z",
+  "modified": "2026-09-27T19:37:26.422Z",
+  "tabNames": {
+    "notes": "Notes",
+    "outline": "Outline"
+  },
+  "chapterTitles": {},
+  "chapterNotes": {},
+  "wordCount": 15,
+  "dailyCounts": {
+    "2026-09-28": {
+      "start": 12,
+      "end": 15
+    }
+  },
+  "lastPosition": {
+    "chapterId": "ch-one",
+    "scroll": 496
+  }
+}
