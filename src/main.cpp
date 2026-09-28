@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
     }
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Browse an existing NEO Library in LEO."));
+    parser.setApplicationDescription(QStringLiteral("Create and write in NEO Libraries with LEO."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("library"),
@@ -87,15 +87,12 @@ int main(int argc, char *argv[])
         const QString defaultPath = LibraryWindow::defaultLibraryPath();
         if (QDir(defaultPath).exists()) {
             path = defaultPath;
-        } else {
-            path = LibraryWindow::selectLibraryDirectory(nullptr, defaultPath);
-            if (path.isEmpty()) {
-                return 0;
-            }
         }
     }
 
-    window.openLibrary(path);
+    if (!path.isEmpty()) {
+        window.openLibrary(path);
+    }
     window.show();
     return application->exec();
 }

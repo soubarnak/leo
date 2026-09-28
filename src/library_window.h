@@ -4,9 +4,13 @@
 #include <QMainWindow>
 
 #include "legacy_chapter_codec.h"
+#include "library_reader.h"
 
 class QLabel;
+class QComboBox;
+class QLineEdit;
 class QPlainTextEdit;
+class QSyntaxHighlighter;
 class QPushButton;
 class QStackedWidget;
 class QTimer;
@@ -25,8 +29,16 @@ public:
     bool openLibrary(const QString &path);
 
 private:
+    void beginNewLibrary();
+    void createNewLibrary();
     void chooseLibrary();
     bool openChapter(QTreeWidgetItem *item);
+    bool openOutline(QTreeWidgetItem *item);
+    bool openDocument(const QString &relativePath,
+                      const QString &title,
+                      const LegacyChapterLinkContext &links,
+                      bool outline);
+    void applyPreferences(const LibraryPreferences &preferences);
     bool saveCurrentChapter();
     bool savePendingEdits();
     void saveRepairCopy();
@@ -35,6 +47,15 @@ private:
     void closeEvent(QCloseEvent *event) override;
 
     QStackedWidget *pages_ = nullptr;
+    QWidget *welcomePage_ = nullptr;
+    QWidget *onboardingPage_ = nullptr;
+    QWidget *onboardingReturnPage_ = nullptr;
+    QLabel *onboardingError_ = nullptr;
+    QLineEdit *onboardingAuthor_ = nullptr;
+    QLineEdit *onboardingLocation_ = nullptr;
+    QComboBox *onboardingMode_ = nullptr;
+    QComboBox *onboardingBodyFont_ = nullptr;
+    QComboBox *onboardingDropCap_ = nullptr;
     QLabel *recoveryNotice_ = nullptr;
     QPushButton *openRecoveredLibraryButton_ = nullptr;
     QPushButton *openRecoveredFromRefusalButton_ = nullptr;
@@ -43,6 +64,7 @@ private:
     QLabel *editorTitle_ = nullptr;
     QLabel *editorState_ = nullptr;
     QPlainTextEdit *chapterEditor_ = nullptr;
+    QSyntaxHighlighter *dropCapHighlighter_ = nullptr;
     QPushButton *saveButton_ = nullptr;
     QPushButton *repairCopyButton_ = nullptr;
     QWidget *editorChrome_ = nullptr;
@@ -55,6 +77,8 @@ private:
     QString recoveredLibraryPath_;
     QString conflictDraftPath_;
     QString activeChapterRelativePath_;
+    LibraryPreferences activePreferences_;
+    QString preferenceNotice_;
     QByteArray sourceHash_;
     QByteArray sourceBytes_;
     LegacyChapterDocument chapterDocument_;
@@ -63,6 +87,7 @@ private:
     bool chapterDirty_ = false;
     bool chapterConflict_ = false;
     bool chapterReadOnly_ = true;
+    bool activeDocumentIsOutline_ = false;
     bool sourceAvailable_ = false;
     bool loadingChapter_ = false;
     bool saveFailed_ = false;

@@ -272,6 +272,44 @@ LibraryReadResult LibraryReader::read(const QString &path)
 
     Library library;
     library.path = root;
+    const QJsonValue writingStyle = libraryObject.value(QStringLiteral("writingStyle"));
+    if (writingStyle.isString()) {
+        if (!writingStyle.toString().isEmpty()) {
+            library.preferences.writingStyle = writingStyle.toString();
+        } else {
+            library.preferences.writingStyleInvalid = true;
+        }
+    } else if (!writingStyle.isUndefined()) {
+        library.preferences.writingStyleInvalid = true;
+    }
+    const QJsonValue initialBookId = libraryObject.value(QStringLiteral("initialBookId"));
+    if (initialBookId.isString()) {
+        library.preferences.initialBookId = initialBookId.toString();
+    }
+    const QJsonValue fontsValue = libraryObject.value(QStringLiteral("fonts"));
+    if (fontsValue.isObject()) {
+        const QJsonObject fonts = fontsValue.toObject();
+        const QJsonValue bodyFont = fonts.value(QStringLiteral("body"));
+        if (bodyFont.isString()) {
+            library.preferences.bodyFont = bodyFont.toString();
+            library.preferences.bodyFontInvalid = bodyFont.toString().isEmpty();
+        } else if (!bodyFont.isUndefined()) {
+            library.preferences.bodyFontInvalid = true;
+        }
+        const QJsonValue dropCapStyle = fonts.value(QStringLiteral("dropcap"));
+        if (dropCapStyle.isString()) {
+            if (!dropCapStyle.toString().isEmpty()) {
+                library.preferences.dropCapStyle = dropCapStyle.toString();
+            } else {
+                library.preferences.dropCapStyleInvalid = true;
+            }
+        } else if (!dropCapStyle.isUndefined()) {
+            library.preferences.dropCapStyleInvalid = true;
+        }
+    } else if (!fontsValue.isUndefined()) {
+        library.preferences.bodyFontInvalid = true;
+        library.preferences.dropCapStyleInvalid = true;
+    }
     if (!parseAuthors(libraryObject, libraryPath, &library.authors, &result.error)) {
         return result;
     }

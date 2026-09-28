@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -10,7 +11,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMap>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTemporaryDir>
@@ -230,6 +234,338 @@ class LibraryBrowserTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void newWriterCreatesLibraryWithPreferencesAndOpensOutline()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        QTemporaryDir privateState;
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+        QTemporaryDir locationRoot;
+        QVERIFY(locationRoot.isValid());
+        const QString libraryPath = QDir(locationRoot.path()).filePath("Writer Library");
+
+        LibraryWindow window;
+        window.show();
+        QApplication::processEvents();
+
+        auto *createButton = window.findChild<QPushButton *>("new-library-button");
+        QVERIFY(createButton);
+        createButton->click();
+
+        auto *author = window.findChild<QLineEdit *>("onboarding-author");
+        auto *location = window.findChild<QLineEdit *>("onboarding-location");
+        auto *mode = window.findChild<QComboBox *>("onboarding-mode");
+        auto *bodyFont = window.findChild<QComboBox *>("onboarding-body-font");
+        auto *dropCap = window.findChild<QComboBox *>("onboarding-drop-cap");
+        auto *submit = window.findChild<QPushButton *>("onboarding-submit");
+        QVERIFY(author);
+        QVERIFY(location);
+        QVERIFY(mode);
+        QVERIFY(bodyFont);
+        QVERIFY(dropCap);
+        QVERIFY(submit);
+
+        author->setText(QStringLiteral("Ada Lovelace"));
+        location->setText(libraryPath);
+        mode->setCurrentIndex(mode->findData(QStringLiteral("plotter")));
+        dropCap->setCurrentIndex(dropCap->findData(QStringLiteral("scifi")));
+        const QString selectedBodyFont = bodyFont->currentData().toString();
+        QVERIFY(!selectedBodyFont.isEmpty());
+        submit->click();
+        QApplication::processEvents();
+
+        QFile libraryFile(QDir(libraryPath).filePath(QStringLiteral("library.json")));
+        QVERIFY(libraryFile.open(QIODevice::ReadOnly));
+        const QJsonObject library = QJsonDocument::fromJson(libraryFile.readAll()).object();
+        QCOMPARE(library.value(QStringLiteral("writingStyle")).toString(), QStringLiteral("plotter"));
+        const QJsonObject fonts = library.value(QStringLiteral("fonts")).toObject();
+        QCOMPARE(fonts.value(QStringLiteral("body")).toString(), selectedBodyFont);
+        QCOMPARE(fonts.value(QStringLiteral("dropcap")).toString(), QStringLiteral("scifi"));
+
+        const QJsonArray authors = library.value(QStringLiteral("authors")).toArray();
+        QCOMPARE(authors.size(), 1);
+        QCOMPARE(authors.first().toObject().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("Ada Lovelace"));
+        const QJsonArray shelves = library.value(QStringLiteral("shelves")).toArray();
+        QCOMPARE(shelves.size(), 1);
+        const QJsonArray bookIds = shelves.first().toObject()
+                                       .value(QStringLiteral("bookIds")).toArray();
+        QCOMPARE(bookIds.size(), 1);
+
+        const QString bookPath = QDir(libraryPath).filePath(bookIds.first().toString());
+        QFile bookFile(QDir(bookPath).filePath(QStringLiteral("book.json")));
+        QVERIFY(bookFile.open(QIODevice::ReadOnly));
+        const QJsonObject book = QJsonDocument::fromJson(bookFile.readAll()).object();
+        QVERIFY(book.value(QStringLiteral("chapterOrder")).toArray().isEmpty());
+        QVERIFY(QFileInfo::exists(QDir(bookPath).filePath(QStringLiteral("outline.html"))));
+
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *title = window.findChild<QLabel *>("chapter-title");
+        QVERIFY(editor);
+        QVERIFY(title);
+        QVERIFY(editor->isVisible());
+        QVERIFY(!editor->isReadOnly());
+        QVERIFY(title->text().contains(QStringLiteral("Outline")));
+        QCOMPARE(editor->font().family(), selectedBodyFont);
+        editor->setPlainText(QStringLiteral("Chapter one begins."));
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(save);
+        QVERIFY(save->isEnabled());
+        save->click();
+        QVERIFY(window.findChild<QLabel *>("chapter-save-state")
+                    ->text().contains(QStringLiteral("Outline text is editable. Changes are saved.")));
+        const QByteArray outlineBytes =
+            readFile(QDir(bookPath).filePath(QStringLiteral("outline.html")));
+        QVERIFY(outlineBytes.contains(QByteArrayLiteral("Chapter one begins.")));
+
+        const QString returningChapterId = QStringLiteral("returning-chapter");
+        QJsonObject returningBook = book;
+        returningBook.insert(QStringLiteral("chapterOrder"), QJsonArray{returningChapterId});
+        returningBook.insert(QStringLiteral("chapterTitles"),
+                             QJsonObject{{returningChapterId, QStringLiteral("Chapter 1")}});
+        writeFile(QDir(bookPath).filePath(QStringLiteral("book.json")),
+                  QJsonDocument(returningBook).toJson(QJsonDocument::Indented));
+        QVERIFY(QDir().mkpath(QDir(bookPath).filePath(QStringLiteral("chapters"))));
+        writeFile(QDir(bookPath).filePath(QStringLiteral("chapters/") + returningChapterId +
+                                         QStringLiteral(".html")),
+                  QByteArrayLiteral("<p>Already started.</p>\n"));
+
+        const auto originalHashes = libraryFileHashes(libraryPath);
+        window.close();
+        QApplication::processEvents();
+
+        LibraryWindow reopened;
+        QVERIFY(reopened.openLibrary(libraryPath));
+        reopened.show();
+        QApplication::processEvents();
+        auto *onboarding = reopened.findChild<QWidget *>("library-onboarding");
+        auto *tree = reopened.findChild<QTreeWidget *>("library-tree");
+        QVERIFY(onboarding);
+        QVERIFY(onboarding->isHidden());
+        QVERIFY(tree);
+        auto *reopenedEditor = reopened.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *reopenedTitle = reopened.findChild<QLabel *>("chapter-title");
+        QVERIFY(reopenedEditor);
+        QVERIFY(reopenedTitle->text().contains(QStringLiteral("Outline")));
+        QVERIFY(!reopenedEditor->isReadOnly());
+        QCOMPARE(reopenedEditor->toPlainText(), QStringLiteral("Chapter one begins."));
+        QTreeWidgetItem *bookItem = tree->topLevelItem(0)->child(0)->child(0);
+        QTreeWidgetItem *outlineItem = nullptr;
+        for (int childIndex = 0; childIndex < bookItem->childCount(); ++childIndex) {
+            if (bookItem->child(childIndex)->text(0) == QStringLiteral("Outline")) {
+                outlineItem = bookItem->child(childIndex);
+                break;
+            }
+        }
+        QVERIFY(outlineItem);
+        QCOMPARE(reopenedEditor->font().family(), selectedBodyFont);
+        QCOMPARE(libraryFileHashes(libraryPath), originalHashes);
+    }
+
+    void cancelAndExistingLocationLeaveLibraryFilesUntouched()
+    {
+        QTemporaryDir existing = makeLibrary();
+        const auto originalHashes = libraryFileHashes(existing.path());
+
+        QTemporaryDir locationRoot;
+        QVERIFY(locationRoot.isValid());
+        const QString canceledPath = QDir(locationRoot.path()).filePath("Canceled Library");
+        LibraryWindow window;
+        window.show();
+        QApplication::processEvents();
+        auto *createButton = window.findChild<QPushButton *>("new-library-button");
+        QVERIFY(createButton);
+        createButton->click();
+        auto *location = window.findChild<QLineEdit *>("onboarding-location");
+        auto *submit = window.findChild<QPushButton *>("onboarding-submit");
+        auto *cancel = window.findChild<QPushButton *>("onboarding-cancel");
+        auto *error = window.findChild<QLabel *>("onboarding-error");
+        QVERIFY(location);
+        QVERIFY(submit);
+        QVERIFY(cancel);
+        QVERIFY(error);
+
+        location->setText(existing.path());
+        submit->click();
+        QVERIFY(error->text().contains(QStringLiteral("already exists")));
+        QCOMPARE(libraryFileHashes(existing.path()), originalHashes);
+
+        location->setText(canceledPath);
+        cancel->click();
+        QVERIFY(!QFileInfo::exists(canceledPath));
+        QVERIFY(window.findChild<QWidget *>("library-welcome")->isVisible());
+        QCOMPARE(libraryFileHashes(existing.path()), originalHashes);
+
+        LibraryWindow returningWriter;
+        QVERIFY(returningWriter.openLibrary(existing.path()));
+        returningWriter.show();
+        QApplication::processEvents();
+        QMenu *fileMenu = returningWriter.menuBar()->actions().first()->menu();
+        QVERIFY(fileMenu);
+        QAction *newLibraryAction = nullptr;
+        for (QAction *action : fileMenu->actions()) {
+            if (action->text() == QStringLiteral("New Library…")) {
+                newLibraryAction = action;
+                break;
+            }
+        }
+        QVERIFY(newLibraryAction);
+        newLibraryAction->trigger();
+        auto *returningCancel = returningWriter.findChild<QPushButton *>("onboarding-cancel");
+        QVERIFY(returningCancel);
+        returningCancel->click();
+        QVERIFY(returningWriter.findChild<QTreeWidget *>("library-tree")->isVisible());
+        QCOMPARE(libraryFileHashes(existing.path()), originalHashes);
+    }
+
+    void pantserSetupOpensWritableFirstChapter()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        QTemporaryDir privateState;
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+        QTemporaryDir locationRoot;
+        QVERIFY(locationRoot.isValid());
+        const QString libraryPath = QDir(locationRoot.path()).filePath("Pantser Library");
+
+        LibraryWindow window;
+        window.show();
+        QApplication::processEvents();
+        auto *createButton = window.findChild<QPushButton *>("new-library-button");
+        QVERIFY(createButton);
+        createButton->click();
+        auto *location = window.findChild<QLineEdit *>("onboarding-location");
+        auto *submit = window.findChild<QPushButton *>("onboarding-submit");
+        QVERIFY(location);
+        QVERIFY(submit);
+        location->setText(libraryPath);
+        submit->click();
+        QApplication::processEvents();
+
+        QFile libraryFile(QDir(libraryPath).filePath(QStringLiteral("library.json")));
+        QVERIFY(libraryFile.open(QIODevice::ReadOnly));
+        const QJsonObject library = QJsonDocument::fromJson(libraryFile.readAll()).object();
+        QCOMPARE(library.value(QStringLiteral("writingStyle")).toString(), QStringLiteral("pantser"));
+        QCOMPARE(library.value(QStringLiteral("authorName")).toString(), QStringLiteral("Anonymous"));
+        const QString bookId = library.value(QStringLiteral("shelves")).toArray().first()
+                                   .toObject().value(QStringLiteral("bookIds")).toArray().first()
+                                   .toString();
+        QFile bookFile(QDir(libraryPath).filePath(bookId + QStringLiteral("/book.json")));
+        QVERIFY(bookFile.open(QIODevice::ReadOnly));
+        const QJsonObject book = QJsonDocument::fromJson(bookFile.readAll()).object();
+        const QJsonArray chapters = book.value(QStringLiteral("chapterOrder")).toArray();
+        QCOMPARE(chapters.size(), 1);
+
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *title = window.findChild<QLabel *>("chapter-title");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(title);
+        QVERIFY(state);
+        QVERIFY(save);
+        QVERIFY(title->text().contains(QStringLiteral("Chapter 1")));
+        QVERIFY(!editor->isReadOnly());
+        editor->setPlainText(QStringLiteral("The first sentence."));
+        QApplication::processEvents();
+        QVERIFY(save->isEnabled());
+        save->click();
+        const QString chapterPath = QDir(libraryPath).filePath(
+            bookId + QStringLiteral("/chapters/") + chapters.first().toString() +
+            QStringLiteral(".html"));
+        QVERIFY2(readFile(chapterPath).contains(QByteArrayLiteral("<p>The first sentence.</p>")),
+                 qPrintable(state->text()));
+    }
+
+    void invalidOnboardingChoicesUseSafeDefaults()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        QTemporaryDir privateState;
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+        QTemporaryDir locationRoot;
+        QVERIFY(locationRoot.isValid());
+        const QString libraryPath = QDir(locationRoot.path()).filePath("Fallback Library");
+
+        LibraryWindow window;
+        window.show();
+        QApplication::processEvents();
+        auto *createButton = window.findChild<QPushButton *>("new-library-button");
+        QVERIFY(createButton);
+        createButton->click();
+
+        auto *location = window.findChild<QLineEdit *>("onboarding-location");
+        auto *mode = window.findChild<QComboBox *>("onboarding-mode");
+        auto *bodyFont = window.findChild<QComboBox *>("onboarding-body-font");
+        auto *dropCap = window.findChild<QComboBox *>("onboarding-drop-cap");
+        auto *submit = window.findChild<QPushButton *>("onboarding-submit");
+        QVERIFY(location);
+        QVERIFY(mode);
+        QVERIFY(bodyFont);
+        QVERIFY(dropCap);
+        QVERIFY(submit);
+        location->setText(libraryPath);
+        mode->setCurrentIndex(-1);
+        bodyFont->setCurrentIndex(-1);
+        dropCap->setCurrentIndex(-1);
+        submit->click();
+
+        const QJsonObject library = QJsonDocument::fromJson(
+                                       readFile(QDir(libraryPath).filePath(
+                                           QStringLiteral("library.json"))))
+                                       .object();
+        QCOMPARE(library.value(QStringLiteral("writingStyle")).toString(), QStringLiteral("pantser"));
+        const QJsonObject fonts = library.value(QStringLiteral("fonts")).toObject();
+        QVERIFY(!fonts.value(QStringLiteral("body")).toString().isEmpty());
+        QCOMPARE(fonts.value(QStringLiteral("dropcap")).toString(), QStringLiteral("literary"));
+        auto *title = window.findChild<QLabel *>("chapter-title");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        QVERIFY(title);
+        QVERIFY(state);
+        QVERIFY(title->text().contains(QStringLiteral("Chapter 1")));
+        QVERIFY(state->text().contains(QStringLiteral("safe defaults")));
+    }
+
+    void unavailableSavedPreferencesUseFallbackWithoutLibraryWrites()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
+        QVERIFY(library.isValid());
+        QJsonObject metadata = QJsonDocument::fromJson(
+                                   readFile(QDir(library.path()).filePath(
+                                       QStringLiteral("library.json"))))
+                                   .object();
+        metadata.insert(QStringLiteral("writingStyle"), QStringLiteral("unknown-mode"));
+        metadata.insert(QStringLiteral("fonts"), QJsonObject{
+            {QStringLiteral("body"), QStringLiteral("Font That Does Not Exist")},
+            {QStringLiteral("dropcap"), QStringLiteral("invalid-style")}});
+        writeFile(QDir(library.path()).filePath(QStringLiteral("library.json")),
+                  QJsonDocument(metadata).toJson(QJsonDocument::Indented));
+        const auto originalHashes = libraryFileHashes(library.path());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        QVERIFY(editor);
+        QVERIFY(state);
+        QVERIFY(!editor->isReadOnly());
+        QVERIFY(editor->font().family() != QStringLiteral("Font That Does Not Exist"));
+        QVERIFY(state->text().contains(QStringLiteral("unavailable")));
+        QVERIFY(state->text().contains(QStringLiteral("Unknown writing mode")));
+        QVERIFY(state->text().contains(QStringLiteral("Unknown drop-cap choice")));
+
+        window.close();
+        QApplication::processEvents();
+        QCOMPARE(libraryFileHashes(library.path()), originalHashes);
+    }
+
     void opensMultiAuthorLibraryInStoredOrderWithoutChangingFiles()
     {
         QTemporaryDir library = makeLibrary();
@@ -339,6 +675,9 @@ private slots:
         QTemporaryDir privateData;
         QVERIFY(privateData.isValid());
         ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        QTemporaryDir privateState;
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
 
         const QByteArray protectedHtml(
             "<div data-future=\"keep&amp;exact\"><span data-version=\"9\">future</span></div>");
@@ -577,6 +916,9 @@ private slots:
         QTemporaryDir privateData;
         QVERIFY(privateData.isValid());
         ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        QTemporaryDir privateState;
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
 
         const QByteArray sceneBreak(
             "<p class=\"scene-break\" data-sec-brk=\"sec-1\">***</p>");

@@ -27,10 +27,21 @@ struct Author {
     QVector<Shelf> shelves;
 };
 
+struct LibraryPreferences {
+    QString writingStyle = QStringLiteral("pantser");
+    QString bodyFont;
+    QString dropCapStyle = QStringLiteral("literary");
+    QString initialBookId;
+    bool writingStyleInvalid = false;
+    bool bodyFontInvalid = false;
+    bool dropCapStyleInvalid = false;
+};
+
 struct Library {
     QString path;
     QVector<Author> authors;
     QVector<Book> unfiledBooks;
+    LibraryPreferences preferences;
 };
 
 struct LibraryReadResult {

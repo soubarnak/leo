@@ -1,7 +1,9 @@
 #include "library_window.h"
 
 #include "app_paths.h"
+#include "font_preferences.h"
 #include "legacy_chapter_codec.h"
+#include "library_creator.h"
 #include "library_persistence.h"
 #include "library_reader.h"
 #include "release_check_dialog.h"
@@ -10,6 +12,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QCursor>
@@ -20,6 +23,9 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontDatabase>
+#include <QFormLayout>
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QInputMethodEvent>
@@ -30,6 +36,7 @@
 #include <QJsonParseError>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -40,6 +47,9 @@
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QSyntaxHighlighter>
+#include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTimer>
 #include <QTreeWidget>
@@ -48,6 +58,7 @@
 #include <QVector>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <functional>
 #include <utility>
 
@@ -57,14 +68,17 @@ constexpr int ItemKindRole = Qt::UserRole + 1;
 constexpr int BookIdRole = Qt::UserRole + 2;
 constexpr int ChapterIdRole = Qt::UserRole + 3;
 constexpr int ChapterItemKind = 1;
+constexpr int OutlineItemKind = 2;
 
 QString deviceHandoffGuidance()
 {
     return QStringLiteral(
-        "After LEO closes, wait for Syncthing to report Up to Date before opening this Library "
+        "Device handoff: after LEO closes, wait for Syncthing to report Up to Date before opening "
+        "this Library "
         "in NEO desktop or Pocket. "
-        "Simultaneous editing is unsupported. If LEO detects a competing edit, it pauses shared saves, "
-        "preserves your draft, and keeps the other version in the shared Library. If LEO verifies "
+        "Edit this Library on only one device at a time. If LEO detects a competing edit, "
+        "it pauses shared saves, preserves your draft, and keeps the other version in the shared Library. "
+        "If LEO verifies "
         "a separate Recovered Library, use Switch to Recovered Library to inspect your draft. "
         "LEO cannot detect every legacy write race or prevent sync software from exposing an "
         "intermediate multi-file save.");
@@ -88,7 +102,7 @@ struct ProtectedSpan {
     qsizetype end;
 };
 
-void addBook(QTreeWidgetItem *parent, const Book &book)
+void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline)
 {
     auto *bookItem = new QTreeWidgetItem(parent, {book.title, book.author});
     bookItem->setToolTip(0, book.title);
@@ -107,6 +121,26 @@ void addBook(QTreeWidgetItem *parent, const Book &book)
         chapterItem->setData(0, BookIdRole, book.id);
         chapterItem->setData(0, ChapterIdRole, chapter.id);
     }
+    if (hasOutline) {
+        auto *outlineItem = new QTreeWidgetItem(bookItem, {QStringLiteral("Outline")});
+        outlineItem->setToolTip(0, QStringLiteral("Open the book outline"));
+        outlineItem->setData(0, ItemKindRole, OutlineItemKind);
+        outlineItem->setData(0, BookIdRole, book.id);
+    }
+}
+
+QTreeWidgetItem *findBookItem(QTreeWidgetItem *item, const QString &bookId)
+{
+    if (item->data(0, ItemKindRole).toInt() == 0 &&
+        item->data(0, BookIdRole).toString() == bookId) {
+        return item;
+    }
+    for (int childIndex = 0; childIndex < item->childCount(); ++childIndex) {
+        if (QTreeWidgetItem *match = findBookItem(item->child(childIndex), bookId)) {
+            return match;
+        }
+    }
+    return nullptr;
 }
 
 QString canonicalOrCleanPath(const QString &path)
@@ -275,6 +309,54 @@ QStringList protectedTokens(const LegacyChapterDocument &document)
 }
 
 }
+
+class DropCapHighlighter final : public QSyntaxHighlighter {
+public:
+    explicit DropCapHighlighter(QTextDocument *document)
+        : QSyntaxHighlighter(document)
+    {
+    }
+
+    void setPreferences(const QString &style, const QString &bodyFont)
+    {
+        style_ = style;
+        QFont font(bodyFont);
+        font.setPointSizeF(std::max(30.0, font.pointSizeF() * 2.1));
+        if (style_ == QStringLiteral("fantasy")) {
+            font.setItalic(true);
+        } else if (style_ == QStringLiteral("scifi")) {
+            font.setWeight(QFont::DemiBold);
+        }
+        const QString family = FontPreferences::dropCapFamily(style_);
+        if (!family.isEmpty()) {
+            font.setFamily(family);
+        }
+        format_.setFont(font);
+        rehighlight();
+    }
+
+protected:
+    void highlightBlock(const QString &text) override
+    {
+        for (QTextBlock previous = currentBlock().previous(); previous.isValid();
+             previous = previous.previous()) {
+            if (!previous.text().trimmed().isEmpty()) {
+                return;
+            }
+        }
+        qsizetype firstLetter = 0;
+        while (firstLetter < text.size() && text.at(firstLetter).isSpace()) {
+            ++firstLetter;
+        }
+        if (firstLetter < text.size()) {
+            setFormat(static_cast<int>(firstLetter), 1, format_);
+        }
+    }
+
+private:
+    QString style_ = QStringLiteral("literary");
+    QTextCharFormat format_;
+};
 
 class ProtectedChapterEditor final : public QPlainTextEdit {
 public:
@@ -655,6 +737,130 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     centralLayout->addWidget(recoveryNotice_);
     pages_ = new QStackedWidget(centralPage);
     centralLayout->addWidget(pages_, 1);
+
+    welcomePage_ = new QWidget(pages_);
+    welcomePage_->setObjectName(QStringLiteral("library-welcome"));
+    auto *welcomeLayout = new QVBoxLayout(welcomePage_);
+    welcomeLayout->addStretch();
+    auto *welcomeTitle = new QLabel(QStringLiteral("Welcome to LEO"), welcomePage_);
+    welcomeTitle->setAlignment(Qt::AlignCenter);
+    QFont welcomeTitleFont = welcomeTitle->font();
+    welcomeTitleFont.setPointSize(welcomeTitleFont.pointSize() + 8);
+    welcomeTitle->setFont(welcomeTitleFont);
+    welcomeLayout->addWidget(welcomeTitle);
+    auto *welcomeCopy = new QLabel(
+        QStringLiteral("Create a Library for a new writing project, or open one you already use."),
+        welcomePage_);
+    welcomeCopy->setAlignment(Qt::AlignCenter);
+    welcomeCopy->setWordWrap(true);
+    welcomeLayout->addWidget(welcomeCopy);
+    auto *newLibraryButton = new QPushButton(QStringLiteral("Create a new Library…"), welcomePage_);
+    newLibraryButton->setObjectName(QStringLiteral("new-library-button"));
+    newLibraryButton->setDefault(true);
+    welcomeLayout->addWidget(newLibraryButton, 0, Qt::AlignHCenter);
+    auto *openExistingButton = new QPushButton(QStringLiteral("Open an existing Library…"),
+                                               welcomePage_);
+    openExistingButton->setObjectName(QStringLiteral("open-existing-library-button"));
+    welcomeLayout->addWidget(openExistingButton, 0, Qt::AlignHCenter);
+    welcomeLayout->addStretch();
+    connect(newLibraryButton, &QPushButton::clicked, this, &LibraryWindow::beginNewLibrary);
+    connect(openExistingButton, &QPushButton::clicked, this, &LibraryWindow::chooseLibrary);
+
+    onboardingPage_ = new QWidget(pages_);
+    onboardingPage_->setObjectName(QStringLiteral("library-onboarding"));
+    auto *onboardingLayout = new QVBoxLayout(onboardingPage_);
+    auto *onboardingTitle = new QLabel(QStringLiteral("Set up your writing Library"),
+                                       onboardingPage_);
+    onboardingTitle->setObjectName(QStringLiteral("onboarding-title"));
+    onboardingLayout->addWidget(onboardingTitle);
+    auto *onboardingCopy = new QLabel(
+        QStringLiteral("These choices are saved in the Library. You can change them later."),
+        onboardingPage_);
+    onboardingCopy->setWordWrap(true);
+    onboardingLayout->addWidget(onboardingCopy);
+    auto *onboardingForm = new QFormLayout;
+    onboardingAuthor_ = new QLineEdit(onboardingPage_);
+    onboardingAuthor_->setObjectName(QStringLiteral("onboarding-author"));
+    onboardingAuthor_->setPlaceholderText(QStringLiteral("Anonymous"));
+    onboardingForm->addRow(QStringLiteral("Author name"), onboardingAuthor_);
+    onboardingMode_ = new QComboBox(onboardingPage_);
+    onboardingMode_->setObjectName(QStringLiteral("onboarding-mode"));
+    onboardingMode_->addItem(QStringLiteral("Pantser — start with a blank chapter"),
+                             QStringLiteral("pantser"));
+    onboardingMode_->addItem(QStringLiteral("Plotter — start with an outline"),
+                             QStringLiteral("plotter"));
+    onboardingForm->addRow(QStringLiteral("Writing mode"), onboardingMode_);
+    onboardingBodyFont_ = new QComboBox(onboardingPage_);
+    onboardingBodyFont_->setObjectName(QStringLiteral("onboarding-body-font"));
+    const QStringList installedFonts = QFontDatabase::families();
+    const QStringList preferredFonts{
+        QStringLiteral("Georgia"), QStringLiteral("Palatino"), QStringLiteral("Baskerville"),
+        QStringLiteral("Cambria"), QStringLiteral("Constantia"),
+        QStringLiteral("DejaVu Serif"), QStringLiteral("Liberation Serif"),
+        QStringLiteral("Noto Serif")};
+    for (const QString &preferredFont : preferredFonts) {
+        const auto found = std::find_if(installedFonts.cbegin(), installedFonts.cend(),
+                                        [&preferredFont](const QString &installedFont) {
+                                            return installedFont.compare(preferredFont,
+                                                                         Qt::CaseInsensitive) == 0;
+                                        });
+        if (found != installedFonts.cend()) {
+            onboardingBodyFont_->addItem(*found, *found);
+        }
+    }
+    if (onboardingBodyFont_->count() == 0) {
+        const QString systemSerif = FontPreferences::systemSerifFamily();
+        onboardingBodyFont_->addItem(systemSerif, systemSerif);
+    }
+    onboardingForm->addRow(QStringLiteral("Body typeface"), onboardingBodyFont_);
+    onboardingDropCap_ = new QComboBox(onboardingPage_);
+    onboardingDropCap_->setObjectName(QStringLiteral("onboarding-drop-cap"));
+    onboardingDropCap_->addItem(QStringLiteral("Literary"), QStringLiteral("literary"));
+    onboardingDropCap_->addItem(QStringLiteral("Fantasy"), QStringLiteral("fantasy"));
+    onboardingDropCap_->addItem(QStringLiteral("Sci-Fi"), QStringLiteral("scifi"));
+    onboardingForm->addRow(QStringLiteral("Drop-cap style"), onboardingDropCap_);
+
+    onboardingLocation_ = new QLineEdit(defaultPath_, onboardingPage_);
+    onboardingLocation_->setObjectName(QStringLiteral("onboarding-location"));
+    auto *locationRow = new QWidget(onboardingPage_);
+    auto *locationLayout = new QHBoxLayout(locationRow);
+    locationLayout->setContentsMargins(0, 0, 0, 0);
+    locationLayout->addWidget(onboardingLocation_, 1);
+    auto *browseLocation = new QPushButton(QStringLiteral("Choose…"), locationRow);
+    browseLocation->setObjectName(QStringLiteral("onboarding-browse"));
+    locationLayout->addWidget(browseLocation);
+    onboardingForm->addRow(QStringLiteral("New Library location"), locationRow);
+    connect(browseLocation, &QPushButton::clicked, this, [this] {
+        const QString parent = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("Choose a folder for the new Library"),
+            QFileInfo(onboardingLocation_->text()).absolutePath(), QFileDialog::ShowDirsOnly);
+        if (!parent.isEmpty()) {
+            onboardingLocation_->setText(QDir(parent).filePath(QStringLiteral("NEO Library")));
+        }
+    });
+    onboardingLayout->addLayout(onboardingForm);
+    onboardingError_ = new QLabel(onboardingPage_);
+    onboardingError_->setObjectName(QStringLiteral("onboarding-error"));
+    onboardingError_->setWordWrap(true);
+    onboardingError_->setStyleSheet(QStringLiteral("color: #a33;"));
+    onboardingLayout->addWidget(onboardingError_);
+    onboardingLayout->addStretch();
+    auto *onboardingButtons = new QHBoxLayout;
+    onboardingButtons->addStretch();
+    auto *cancelOnboarding = new QPushButton(QStringLiteral("Cancel"), onboardingPage_);
+    cancelOnboarding->setObjectName(QStringLiteral("onboarding-cancel"));
+    connect(cancelOnboarding, &QPushButton::clicked, this, [this] {
+        onboardingError_->clear();
+        pages_->setCurrentWidget(onboardingReturnPage_ ? onboardingReturnPage_ : welcomePage_);
+    });
+    onboardingButtons->addWidget(cancelOnboarding);
+    auto *submitOnboarding = new QPushButton(QStringLiteral("Create Library"), onboardingPage_);
+    submitOnboarding->setObjectName(QStringLiteral("onboarding-submit"));
+    submitOnboarding->setDefault(true);
+    connect(submitOnboarding, &QPushButton::clicked, this, &LibraryWindow::createNewLibrary);
+    onboardingButtons->addWidget(submitOnboarding);
+    onboardingLayout->addLayout(onboardingButtons);
+
     tree_ = new QTreeWidget(pages_);
     tree_->setObjectName(QStringLiteral("library-tree"));
     tree_->setAccessibleName(QStringLiteral("Library shelves, books, and chapters"));
@@ -664,7 +870,13 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     tree_->setDragEnabled(false);
     tree_->setAcceptDrops(false);
     connect(tree_, &QTreeWidget::itemActivated, this,
-            [this](QTreeWidgetItem *item, int) { openChapter(item); });
+            [this](QTreeWidgetItem *item, int) {
+                if (item && item->data(0, ItemKindRole).toInt() == OutlineItemKind) {
+                    openOutline(item);
+                } else {
+                    openChapter(item);
+                }
+            });
 
     editorPage_ = new QWidget(pages_);
     auto *editorLayout = new QVBoxLayout(editorPage_);
@@ -712,6 +924,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     chapterEditor_ = new ProtectedChapterEditor(editorPage_);
     chapterEditor_->setObjectName(QStringLiteral("chapter-editor"));
     chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
+    dropCapHighlighter_ = new DropCapHighlighter(chapterEditor_->document());
     static_cast<ProtectedChapterEditor *>(chapterEditor_)->setRefusalHandler([this] {
         const QString message = QStringLiteral(
             "Edit refused because protected legacy content could change. Protected source and linked records remain unchanged.");
@@ -763,16 +976,21 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     refusalLayout->addWidget(chooseAgain, 0, Qt::AlignHCenter);
     refusalLayout->addStretch();
 
+    pages_->addWidget(welcomePage_);
+    pages_->addWidget(onboardingPage_);
     pages_->addWidget(tree_);
     pages_->addWidget(editorPage_);
     pages_->addWidget(refusalPage_);
     setCentralWidget(centralPage);
+    pages_->setCurrentWidget(welcomePage_);
     statusBar()->showMessage(QStringLiteral("No Library open"));
 
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     QAction *openAction = fileMenu->addAction(QStringLiteral("&Open Library…"));
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &LibraryWindow::chooseLibrary);
+    QAction *newLibraryAction = fileMenu->addAction(QStringLiteral("New Library…"));
+    connect(newLibraryAction, &QAction::triggered, this, &LibraryWindow::beginNewLibrary);
     fileMenu->addSeparator();
     QAction *handoffAction = fileMenu->addAction(
         QStringLiteral("Prepare Device Handoff…"));
@@ -842,6 +1060,48 @@ QString LibraryWindow::defaultLibraryPath()
     return QDir(documentsPath).filePath(QStringLiteral("NEO Library"));
 }
 
+void LibraryWindow::beginNewLibrary()
+{
+    if (!savePendingEdits()) {
+        return;
+    }
+    if (pages_->currentWidget() != onboardingPage_) {
+        onboardingReturnPage_ = pages_->currentWidget();
+    }
+    onboardingError_->clear();
+    onboardingAuthor_->clear();
+    onboardingLocation_->setText(defaultPath_);
+    onboardingMode_->setCurrentIndex(onboardingMode_->findData(QStringLiteral("pantser")));
+    onboardingDropCap_->setCurrentIndex(onboardingDropCap_->findData(QStringLiteral("literary")));
+    pages_->setCurrentWidget(onboardingPage_);
+    onboardingAuthor_->setFocus();
+}
+
+void LibraryWindow::createNewLibrary()
+{
+    const NewLibraryOptions options{
+        onboardingLocation_->text(),
+        onboardingAuthor_->text(),
+        onboardingMode_->currentData().toString(),
+        onboardingBodyFont_->currentData().toString(),
+        onboardingDropCap_->currentData().toString()};
+    const NewLibraryResult result = LibraryCreator::create(options);
+    if (!result.ok) {
+        onboardingError_->setText(result.error);
+        return;
+    }
+
+    if (!openLibrary(result.path)) {
+        return;
+    }
+    if (result.usedPreferenceFallback) {
+        const QString fallback = QStringLiteral(
+            "One choice was unavailable. LEO saved safe defaults in the new Library.");
+        editorState_->setText(editorState_->text() + QStringLiteral(" ") + fallback);
+        statusBar()->showMessage(fallback);
+    }
+}
+
 QString LibraryWindow::selectLibraryDirectory(QWidget *parent, const QString &startingPath)
 {
     return QFileDialog::getExistingDirectory(
@@ -899,12 +1159,16 @@ bool LibraryWindow::openLibrary(const QString &path)
     }
 
     activeLibraryPath_ = result.library.path;
+    applyPreferences(result.library.preferences);
+    activeDocumentIsOutline_ = false;
     for (const Author &author : result.library.authors) {
         auto *authorItem = new QTreeWidgetItem(tree_, {author.name});
         for (const Shelf &shelf : author.shelves) {
             auto *shelfItem = new QTreeWidgetItem(authorItem, {shelf.name});
             for (const Book &book : shelf.books) {
-                addBook(shelfItem, book);
+                const QString outlinePath = QDir(result.library.path)
+                                                .filePath(book.id + QStringLiteral("/outline.html"));
+                addBook(shelfItem, book, QFileInfo::exists(outlinePath));
             }
         }
     }
@@ -912,31 +1176,94 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!result.library.unfiledBooks.isEmpty()) {
         auto *unfiled = new QTreeWidgetItem(tree_, {QStringLiteral("Unfiled books")});
         for (const Book &book : result.library.unfiledBooks) {
-            addBook(unfiled, book);
+            const QString outlinePath = QDir(result.library.path)
+                                            .filePath(book.id + QStringLiteral("/outline.html"));
+            addBook(unfiled, book, QFileInfo::exists(outlinePath));
         }
     }
 
     tree_->expandAll();
     pages_->setCurrentWidget(tree_);
-    statusBar()->showMessage(recovery.recovered
-                                 ? QStringLiteral("Interrupted save recovered; review chapter")
-                                 : QStringLiteral("Library open: %1").arg(result.library.path));
+    QString status = recovery.recovered
+                         ? QStringLiteral("Interrupted save recovered; review chapter")
+                         : QStringLiteral("Library open: %1").arg(result.library.path);
+    if (!preferenceNotice_.isEmpty()) {
+        status += QStringLiteral(" — ") + preferenceNotice_;
+    }
+    statusBar()->showMessage(status);
+
+    if (!result.library.preferences.initialBookId.isEmpty()) {
+        QTreeWidgetItem *initialBook = nullptr;
+        for (int itemIndex = 0; itemIndex < tree_->topLevelItemCount() && !initialBook;
+             ++itemIndex) {
+            initialBook = findBookItem(tree_->topLevelItem(itemIndex),
+                                       result.library.preferences.initialBookId);
+        }
+        if (initialBook) {
+            const int preferredKind = activePreferences_.writingStyle ==
+                                              QStringLiteral("plotter")
+                                          ? OutlineItemKind
+                                          : ChapterItemKind;
+            QTreeWidgetItem *startingDocument = nullptr;
+            for (int childIndex = 0; childIndex < initialBook->childCount(); ++childIndex) {
+                QTreeWidgetItem *child = initialBook->child(childIndex);
+                if (child->data(0, ItemKindRole).toInt() == preferredKind) {
+                    startingDocument = child;
+                    break;
+                }
+            }
+            if (!startingDocument && initialBook->childCount() > 0) {
+                startingDocument = initialBook->child(0);
+            }
+            if (startingDocument) {
+                if (startingDocument->data(0, ItemKindRole).toInt() == OutlineItemKind) {
+                    openOutline(startingDocument);
+                } else {
+                    openChapter(startingDocument);
+                }
+            }
+        }
+    }
     return true;
 }
 
 bool LibraryWindow::openChapter(QTreeWidgetItem *item)
 {
-    if (!item || item->data(0, ItemKindRole).toInt() != ChapterItemKind ||
-        !savePendingEdits()) {
+    if (!item || item->data(0, ItemKindRole).toInt() != ChapterItemKind) {
+        return false;
+    }
+    const QString bookId = item->data(0, BookIdRole).toString();
+    const QString chapterId = item->data(0, ChapterIdRole).toString();
+    const QString relativePath = bookId + QStringLiteral("/chapters/") + chapterId +
+                                 QStringLiteral(".html");
+    const QString title = item->parent()->text(0) + QStringLiteral(" — ") + item->text(0);
+    return openDocument(relativePath, title,
+                        loadChapterLinks(activeLibraryPath_, bookId, chapterId), false);
+}
+
+bool LibraryWindow::openOutline(QTreeWidgetItem *item)
+{
+    if (!item || item->data(0, ItemKindRole).toInt() != OutlineItemKind) {
+        return false;
+    }
+    const QString bookId = item->data(0, BookIdRole).toString();
+    const QString relativePath = bookId + QStringLiteral("/outline.html");
+    const QString title = item->parent()->text(0) + QStringLiteral(" — Outline");
+    return openDocument(relativePath, title, {}, true);
+}
+
+bool LibraryWindow::openDocument(const QString &relativePath,
+                                 const QString &title,
+                                 const LegacyChapterLinkContext &links,
+                                 bool outline)
+{
+    if (!savePendingEdits()) {
         return false;
     }
     recoveryNotice_->hide();
-
-    const QString bookId = item->data(0, BookIdRole).toString();
-    const QString chapterId = item->data(0, ChapterIdRole).toString();
-    activeChapterRelativePath_ =
-        bookId + QStringLiteral("/chapters/") + chapterId + QStringLiteral(".html");
-    editorTitle_->setText(item->parent()->text(0) + QStringLiteral(" — ") + item->text(0));
+    activeChapterRelativePath_ = relativePath;
+    activeDocumentIsOutline_ = outline;
+    editorTitle_->setText(title);
     sourceHash_.clear();
     sourceBytes_.clear();
     sourceAvailable_ = false;
@@ -964,13 +1291,14 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
         saveButton_->setEnabled(false);
         loadingChapter_ = false;
         pages_->setCurrentWidget(editorPage_);
-        statusBar()->showMessage(QStringLiteral("Chapter could not be opened safely"));
+        statusBar()->showMessage(outline ? QStringLiteral("Outline could not be opened safely")
+                                         : QStringLiteral("Chapter could not be opened safely"));
         return true;
     }
 
     sourceBytes_ = source;
     sourceAvailable_ = true;
-    chapterLinks_ = loadChapterLinks(activeLibraryPath_, bookId, chapterId);
+    chapterLinks_ = links;
     chapterDocument_ = LegacyChapterCodec::decode(source, chapterLinks_);
     static_cast<ProtectedChapterEditor *>(chapterEditor_)
         ->setProtectedTokens(protectedTokens(chapterDocument_));
@@ -984,26 +1312,87 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
     lastValidEditorText_ = chapterEditor_->toPlainText();
     repairCopyButton_->setVisible(chapterReadOnly_);
 
+    QString stateMessage;
     if (chapterReadOnly_) {
-        editorState_->setText(QStringLiteral("Read-only: %1 The original chapter stays unchanged.")
-                                  .arg(chapterDocument_.refusalReason));
+        stateMessage = QStringLiteral("Read-only: %1 The original %2 stays unchanged.")
+                           .arg(chapterDocument_.refusalReason,
+                                outline ? QStringLiteral("outline")
+                                        : QStringLiteral("chapter"));
     } else if (chapterDocument_.hasProtectedContent()) {
-        editorState_->setText(QStringLiteral(
-            "Safe prose is editable. Protected legacy content stays unchanged."));
+        stateMessage = QStringLiteral(
+            "Safe prose is editable. Protected legacy content stays unchanged.");
     } else {
-        editorState_->setText(QStringLiteral(
-            "Plain prose is editable. Changes save after a short pause."));
+        stateMessage = outline
+                           ? QStringLiteral("Outline text is editable. Changes save after a short pause.")
+                           : QStringLiteral("Plain prose is editable. Changes save after a short pause.");
+    }
+    if (!preferenceNotice_.isEmpty()) {
+        stateMessage += QStringLiteral(" ") + preferenceNotice_;
+    }
+    if (!stateMessage.isEmpty()) {
+        editorState_->setText(stateMessage);
     }
     saveButton_->setText(QStringLiteral("Save"));
     saveButton_->setEnabled(false);
     pages_->setCurrentWidget(editorPage_);
     statusBar()->showMessage(chapterReadOnly_
-                                 ? QStringLiteral("Chapter is read-only")
-                                 : QStringLiteral("Chapter open; no Library files changed"));
+                                 ? (outline ? QStringLiteral("Outline is read-only")
+                                            : QStringLiteral("Chapter is read-only"))
+                                 : (outline ? QStringLiteral("Outline open; no Library files changed")
+                                            : QStringLiteral("Chapter open; no Library files changed")));
     if (!chapterReadOnly_) {
         chapterEditor_->setFocus();
     }
     return true;
+}
+
+void LibraryWindow::applyPreferences(const LibraryPreferences &preferences)
+{
+    activePreferences_ = preferences;
+    preferenceNotice_.clear();
+    QStringList notices;
+
+    if (activePreferences_.writingStyleInvalid ||
+        (activePreferences_.writingStyle != QStringLiteral("pantser") &&
+         activePreferences_.writingStyle != QStringLiteral("plotter"))) {
+        activePreferences_.writingStyle = QStringLiteral("pantser");
+        notices.append(QStringLiteral("Unknown writing mode; using Pantser."));
+    }
+
+        const QString systemSerif = FontPreferences::systemSerifFamily();
+    QString bodyFont = activePreferences_.bodyFont.trimmed();
+    if (activePreferences_.bodyFontInvalid) {
+        notices.append(QStringLiteral("Saved typeface choice is invalid; using '%1'.")
+                           .arg(systemSerif));
+        bodyFont = systemSerif;
+    } else if (!bodyFont.isEmpty()) {
+        const QString installed = FontPreferences::installedFamily({bodyFont});
+        if (installed.isEmpty()) {
+            notices.append(QStringLiteral("Saved typeface '%1' is unavailable; using '%2'.")
+                               .arg(bodyFont, systemSerif));
+            bodyFont = systemSerif;
+        } else {
+            bodyFont = installed;
+        }
+    } else {
+        bodyFont = systemSerif;
+    }
+    QFont editorFont = chapterEditor_->font();
+    editorFont.setFamily(bodyFont);
+    chapterEditor_->setFont(editorFont);
+
+    if (activePreferences_.dropCapStyleInvalid ||
+        (activePreferences_.dropCapStyle != QStringLiteral("literary") &&
+         activePreferences_.dropCapStyle != QStringLiteral("fantasy") &&
+         activePreferences_.dropCapStyle != QStringLiteral("scifi"))) {
+        activePreferences_.dropCapStyle = QStringLiteral("literary");
+        notices.append(QStringLiteral("Unknown drop-cap choice; using Literary."));
+    } else if (FontPreferences::dropCapFamily(activePreferences_.dropCapStyle).isEmpty()) {
+        notices.append(QStringLiteral("Drop-cap typeface is unavailable; using the body typeface."));
+    }
+    static_cast<DropCapHighlighter *>(dropCapHighlighter_)
+        ->setPreferences(activePreferences_.dropCapStyle, bodyFont);
+    preferenceNotice_ = notices.join(QLatin1Char(' '));
 }
 
 bool LibraryWindow::saveCurrentChapter()
@@ -1095,9 +1484,15 @@ bool LibraryWindow::saveCurrentChapter()
     openRecoveredLibraryButton_->hide();
     openRecoveredFromRefusalButton_->hide();
     recoveryNotice_->hide();
-    updateEditorState(chapterDocument_.hasProtectedContent()
-                          ? QStringLiteral("Protected legacy content stays unchanged. Changes are saved.")
-                          : QStringLiteral("Plain prose is editable. Changes save after a short pause."));
+    const QString savedMessage = chapterDocument_.hasProtectedContent()
+                                     ? QStringLiteral(
+                                           "Protected legacy content stays unchanged. Changes are saved.")
+                                     : activeDocumentIsOutline_
+                                           ? QStringLiteral(
+                                                 "Outline text is editable. Changes are saved.")
+                                           : QStringLiteral(
+                                                 "Plain prose is editable. Changes are saved.");
+    updateEditorState(savedMessage);
     return true;
 }
 

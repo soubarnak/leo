@@ -7,7 +7,9 @@ target_link_libraries(leo_platform PUBLIC Qt6::Core Qt6::Network)
 target_compile_options(leo_platform PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(leo_library_browser STATIC
+  font_preferences.cpp
   legacy_chapter_codec.cpp
+  library_creator.cpp
   library_persistence.cpp
   library_reader.cpp
   library_window.cpp
