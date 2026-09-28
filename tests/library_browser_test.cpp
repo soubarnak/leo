@@ -1,6 +1,7 @@
 #include "library_window.h"
 
 #include <QApplication>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -34,9 +35,9 @@ void writeBook(const QString &root, const QString &id, const QByteArray &metadat
     writeFile(QDir(directory).filePath("chapters/chapter.html"), QByteArray("<p>Do not rewrite this file.</p>\n"));
 }
 
-QMap<QString, QByteArray> libraryBytes(const QString &root)
+QMap<QString, QByteArray> libraryFileHashes(const QString &root)
 {
-    QMap<QString, QByteArray> files;
+    QMap<QString, QByteArray> hashes;
     QDirIterator it(root, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
@@ -45,9 +46,10 @@ QMap<QString, QByteArray> libraryBytes(const QString &root)
         if (!file.open(QIODevice::ReadOnly)) {
             qFatal("Could not inspect test Library fixture file");
         }
-        files.insert(QDir(root).relativeFilePath(path), file.readAll());
+        hashes.insert(QDir(root).relativeFilePath(path),
+                       QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256));
     }
-    return files;
+    return hashes;
 }
 
 QTemporaryDir makeLibrary()
@@ -110,7 +112,7 @@ private slots:
     void opensMultiAuthorLibraryInStoredOrderWithoutChangingFiles()
     {
         QTemporaryDir library = makeLibrary();
-        const auto originalBytes = libraryBytes(library.path());
+        const auto originalHashes = libraryFileHashes(library.path());
 
         LibraryWindow window;
         QVERIFY(window.openLibrary(library.path()));
@@ -141,7 +143,7 @@ private slots:
 
         window.close();
         QApplication::processEvents();
-        QCOMPARE(libraryBytes(library.path()), originalBytes);
+        QCOMPARE(libraryFileHashes(library.path()), originalHashes);
     }
 
     void refusesMissingOrCorruptLibraryWithoutShowingEmptyLibrary()

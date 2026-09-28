@@ -63,7 +63,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     refusal_->setAlignment(Qt::AlignCenter);
     refusalLayout->addWidget(refusal_);
     auto *chooseAgain = new QPushButton(QStringLiteral("Choose another Library…"), refusalPage_);
-    connect(chooseAgain, &QPushButton::clicked, this, [this] { chooseLibrary(); });
+    connect(chooseAgain, &QPushButton::clicked, this, &LibraryWindow::chooseLibrary);
     refusalLayout->addWidget(chooseAgain, 0, Qt::AlignHCenter);
     refusalLayout->addStretch();
 
@@ -75,7 +75,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     QAction *openAction = fileMenu->addAction(QStringLiteral("&Open Library…"));
     openAction->setShortcut(QKeySequence::Open);
-    connect(openAction, &QAction::triggered, this, [this] { chooseLibrary(); });
+    connect(openAction, &QAction::triggered, this, &LibraryWindow::chooseLibrary);
     fileMenu->addSeparator();
     QAction *quitAction = fileMenu->addAction(QStringLiteral("E&xit"));
     quitAction->setShortcut(QKeySequence::Quit);
