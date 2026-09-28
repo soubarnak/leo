@@ -3,6 +3,8 @@
 #include <QByteArray>
 #include <QMainWindow>
 
+#include "legacy_chapter_codec.h"
+
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -27,6 +29,7 @@ private:
     bool openChapter(QTreeWidgetItem *item);
     bool saveCurrentChapter();
     bool savePendingEdits();
+    void saveRepairCopy();
     void updateEditorState(const QString &message = QString());
     void closeEvent(QCloseEvent *event) override;
 
@@ -37,6 +40,7 @@ private:
     QLabel *editorState_ = nullptr;
     QPlainTextEdit *chapterEditor_ = nullptr;
     QPushButton *saveButton_ = nullptr;
+    QPushButton *repairCopyButton_ = nullptr;
     QWidget *editorChrome_ = nullptr;
     HoverFadeFilter *chromeHoverFilter_ = nullptr;
     QTimer *saveTimer_ = nullptr;
@@ -46,9 +50,13 @@ private:
     QString activeLibraryPath_;
     QString activeChapterRelativePath_;
     QByteArray sourceHash_;
+    QByteArray sourceBytes_;
+    LegacyChapterDocument chapterDocument_;
+    LegacyChapterLinkContext chapterLinks_;
+    QString lastValidEditorText_;
     bool chapterDirty_ = false;
     bool chapterReadOnly_ = true;
-    bool chapterHasUtf8Bom_ = false;
+    bool sourceAvailable_ = false;
     bool loadingChapter_ = false;
     bool saveFailed_ = false;
 };

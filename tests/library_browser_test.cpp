@@ -5,9 +5,13 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QFileDialog>
 #include <QLabel>
 #include <QMap>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QtTest>
 
@@ -103,6 +107,85 @@ QTemporaryDir makeLibrary()
     return temporary;
 }
 
+QTemporaryDir makeSingleChapterLibrary(const QByteArray &chapter,
+                                      const QByteArray &stickies = QByteArrayLiteral("[]"),
+                                      const QByteArray &darlings = QByteArrayLiteral("[]"),
+                                      const QByteArray &bookMetadata = {})
+{
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) {
+        qFatal("Could not create temporary chapter Library fixture");
+    }
+
+    writeFile(QDir(temporary.path()).filePath("library.json"), QByteArray(R"json({
+  "authors": [{ "id": "a1", "name": "Ada" }],
+  "shelves": [{ "id": "s1", "name": "Drafts", "authorId": "a1", "bookIds": ["book-1"] }],
+  "futureLibraryField": { "keep": true }
+})json"));
+    const QString bookPath = QDir(temporary.path()).filePath("book-1");
+    if (!QDir().mkpath(QDir(bookPath).filePath("chapters"))) {
+        qFatal("Could not create chapter fixture folder");
+    }
+    const QByteArray metadata = bookMetadata.isEmpty() ? QByteArray(R"json({
+  "id": "book-1",
+  "title": "First Title",
+  "author": "Ada",
+  "chapterOrder": ["chapter-a"],
+  "chapterTitles": { "chapter-a": "Arrival" },
+  "futureBookField": { "keep": [1, "future"] }
+})json") : bookMetadata;
+    writeFile(QDir(bookPath).filePath("book.json"), metadata);
+    writeFile(QDir(bookPath).filePath("chapters/chapter-a.html"), chapter);
+    writeFile(QDir(bookPath).filePath("stickies.json"), stickies);
+    writeFile(QDir(bookPath).filePath("darlings.json"), darlings);
+    writeFile(QDir(bookPath).filePath("unknown-supporting-data.bin"),
+              QByteArray("\0future\xff", 8));
+    return temporary;
+}
+
+class ScopedEnvironmentVariable final {
+public:
+    ScopedEnvironmentVariable(const char *name, const QByteArray &value)
+        : name_(name), wasSet_(qEnvironmentVariableIsSet(name)), previous_(qgetenv(name))
+    {
+        qputenv(name, value);
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        if (wasSet_) {
+            qputenv(name_.constData(), previous_);
+        } else {
+            qunsetenv(name_.constData());
+        }
+    }
+
+private:
+    QByteArray name_;
+    bool wasSet_;
+    QByteArray previous_;
+};
+
+QTreeWidgetItem *singleChapterItem(QTreeWidget *tree)
+{
+    return tree->topLevelItem(0)->child(0)->child(0)->child(0);
+}
+
+void openSingleChapter(LibraryWindow *window)
+{
+    window->show();
+    QApplication::processEvents();
+    auto *tree = window->findChild<QTreeWidget *>("library-tree");
+    if (!tree) {
+        qFatal("Library tree is missing in chapter fixture");
+    }
+    tree->expandAll();
+    QTreeWidgetItem *chapter = singleChapterItem(tree);
+    tree->setCurrentItem(chapter);
+    emit tree->itemActivated(chapter, 0);
+    QApplication::processEvents();
+}
+
 }
 
 class LibraryBrowserTest final : public QObject {
@@ -186,6 +269,295 @@ private slots:
         QVERIFY(refusal);
         QVERIFY(refusal->isVisible());
         QVERIFY(refusal->text().contains("book.json"));
+    }
+
+    void editsSafeProseAroundProtectedContentWithoutChangingIt()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        const QByteArray protectedHtml(
+            "<div data-future=\"keep&amp;exact\"><span data-version=\"9\">future</span></div>");
+        const QByteArray protectedMarker(
+            "<p>Question <span class=\"ph-mark\" data-sid=\"s-existing\" "
+            "contenteditable=\"false\">⚑</span></p>");
+        const QByteArray originalChapter = QByteArray("<p>Before prose.</p>\n") + protectedHtml +
+                                           QByteArray("\n") + protectedMarker +
+                                           QByteArray("\r\n<p>After prose.</p>");
+        const QByteArray originalStickies(
+            "[ { \"id\": \"s-existing\", \"chapterId\": \"chapter-a\", "
+            "\"text\": \"keep this link\" } ]");
+        QTemporaryDir library = makeSingleChapterLibrary(originalChapter, originalStickies);
+        QVERIFY(library.isValid());
+        auto originalFileHashes = libraryFileHashes(library.path());
+        const QString bookPath = QDir(library.path()).filePath("book-1");
+        QFile originalBookFile(QDir(bookPath).filePath("book.json"));
+        QVERIFY(originalBookFile.open(QIODevice::ReadOnly));
+        const QByteArray originalBook = originalBookFile.readAll();
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        QVERIFY(!editor->isReadOnly());
+        const QString originalView = editor->toPlainText();
+        QVERIFY(originalView.contains("Protected legacy content"));
+
+        QString edited = originalView;
+        edited.replace(QStringLiteral("Before prose."),
+                        QStringLiteral("Revised prose.\nAdded safe prose."));
+        edited.replace(QStringLiteral("After prose."), QStringLiteral("Finished prose."));
+        editor->setPlainText(edited);
+        QApplication::processEvents();
+        QVERIFY(save->isEnabled());
+        save->click();
+        QApplication::processEvents();
+
+        QFile savedChapter(QDir(bookPath).filePath("chapters/chapter-a.html"));
+        QVERIFY(savedChapter.open(QIODevice::ReadOnly));
+        const QByteArray savedBytes = savedChapter.readAll();
+        QVERIFY(savedBytes.contains("<p>Revised prose.</p>"));
+        QVERIFY(savedBytes.contains("<p>Added safe prose.</p>"));
+        QVERIFY(savedBytes.contains("<p>Finished prose.</p>"));
+        QVERIFY(savedBytes.contains(protectedHtml));
+        QVERIFY(savedBytes.contains(protectedMarker));
+        QVERIFY(savedBytes.contains("\r\n"));
+        QVERIFY(savedBytes.indexOf("<p>Revised prose.</p>") < savedBytes.indexOf(protectedHtml));
+        QVERIFY(savedBytes.indexOf("<p>Added safe prose.</p>") < savedBytes.indexOf(protectedHtml));
+        QVERIFY(savedBytes.indexOf(protectedHtml) < savedBytes.indexOf(protectedMarker));
+        QVERIFY(savedBytes.indexOf(protectedMarker) < savedBytes.indexOf("<p>Finished prose.</p>"));
+
+        QFile savedBook(QDir(bookPath).filePath("book.json"));
+        QVERIFY(savedBook.open(QIODevice::ReadOnly));
+        QCOMPARE(savedBook.readAll(), originalBook);
+        QFile savedStickies(QDir(bookPath).filePath("stickies.json"));
+        QVERIFY(savedStickies.open(QIODevice::ReadOnly));
+        QCOMPARE(savedStickies.readAll(), originalStickies);
+
+        auto savedFileHashes = libraryFileHashes(library.path());
+        originalFileHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        savedFileHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        QCOMPARE(savedFileHashes, originalFileHashes);
+    }
+
+    void refusesAnEditThatChangesProtectedContent()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        const QByteArray originalChapter(
+            "<p>Before.</p><p>Question <span class=\"ph-mark\" data-sid=\"s-existing\" "
+            "contenteditable=\"false\">⚑</span></p><p>After.</p>");
+        const QByteArray originalStickies(
+            "[{\"id\":\"s-existing\",\"chapterId\":\"chapter-a\"}]");
+        QTemporaryDir library = makeSingleChapterLibrary(originalChapter, originalStickies);
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(state);
+        QVERIFY(save);
+        const QString originalView = editor->toPlainText();
+        const qsizetype protectedStart = originalView.indexOf(QStringLiteral("Protected legacy content"));
+        QVERIFY(protectedStart >= 0);
+
+        QTextCursor selection(editor->document());
+        selection.setPosition(static_cast<int>(protectedStart - 1));
+        selection.setPosition(static_cast<int>(originalView.indexOf(QLatin1Char('\n'), protectedStart) + 1),
+                              QTextCursor::KeepAnchor);
+        editor->setTextCursor(selection);
+        QTest::keyClick(editor, Qt::Key_Backspace);
+        QCOMPARE(editor->toPlainText(), originalView);
+        QVERIFY(state->text().contains("refused", Qt::CaseInsensitive));
+        QVERIFY(!save->isEnabled());
+
+        QString invalidEdit = originalView;
+        invalidEdit.remove(protectedStart, invalidEdit.indexOf(QLatin1Char('\n'), protectedStart) - protectedStart);
+
+        editor->setPlainText(invalidEdit);
+        QApplication::processEvents();
+
+        QCOMPARE(editor->toPlainText(), originalView);
+        QVERIFY(state->text().contains("refused", Qt::CaseInsensitive));
+        QVERIFY(!save->isEnabled());
+        QFile unchanged(QDir(library.path()).filePath("book-1/chapters/chapter-a.html"));
+        QVERIFY(unchanged.open(QIODevice::ReadOnly));
+        QCOMPARE(unchanged.readAll(), originalChapter);
+        QFile unchangedStickies(QDir(library.path()).filePath("book-1/stickies.json"));
+        QVERIFY(unchangedStickies.open(QIODevice::ReadOnly));
+        QCOMPARE(unchangedStickies.readAll(), originalStickies);
+    }
+
+    void keepsValidSectionAndDarlingLinksProtectedDuringSafeEdit()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        const QByteArray sceneBreak(
+            "<p class=\"scene-break\" data-sec-brk=\"sec-1\">***</p>");
+        const QByteArray ghost(
+            "<p class=\"ghost\" data-sec-id=\"sec-1\">Outline text</p>");
+        const QByteArray darlingAnchor(
+            "<p><span class=\"darling-anchor\" data-did=\"d-existing\"></span></p>");
+        const QByteArray originalChapter = QByteArray("<p>Before safe prose.</p>") + sceneBreak +
+                                           ghost + darlingAnchor +
+                                           QByteArray("<p>After safe prose.</p>");
+        const QByteArray originalDarlings(
+            "[{\"id\":\"d-existing\",\"chapterId\":\"chapter-a\",\"text\":\"saved prose\"}]");
+        const QByteArray bookMetadata(R"json({
+  "id": "book-1",
+  "title": "First Title",
+  "author": "Ada",
+  "chapterOrder": ["chapter-a"],
+  "chapterTitles": { "chapter-a": "Arrival" },
+  "sectionNotes": {
+    "chapter-a": [{ "id": "sec-1", "text": "Outline text" }]
+  },
+  "futureBookField": { "keep": [1, "future"] }
+})json");
+        QTemporaryDir library = makeSingleChapterLibrary(
+            originalChapter, QByteArrayLiteral("[]"), originalDarlings, bookMetadata);
+        QVERIFY(library.isValid());
+        const auto originalFileHashes = libraryFileHashes(library.path());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        QVERIFY(!editor->isReadOnly());
+
+        QString edited = editor->toPlainText();
+        edited.replace(QStringLiteral("After safe prose."), QStringLiteral("After revision."));
+        editor->setPlainText(edited);
+        QApplication::processEvents();
+        save->click();
+        QApplication::processEvents();
+
+        QFile savedChapter(QDir(library.path()).filePath("book-1/chapters/chapter-a.html"));
+        QVERIFY(savedChapter.open(QIODevice::ReadOnly));
+        const QByteArray savedBytes = savedChapter.readAll();
+        QVERIFY(savedBytes.contains(sceneBreak));
+        QVERIFY(savedBytes.contains(ghost));
+        QVERIFY(savedBytes.contains(darlingAnchor));
+        QVERIFY(savedBytes.contains("<p>After revision.</p>"));
+        QFile savedDarlings(QDir(library.path()).filePath("book-1/darlings.json"));
+        QVERIFY(savedDarlings.open(QIODevice::ReadOnly));
+        QCOMPARE(savedDarlings.readAll(), originalDarlings);
+
+        auto expectedHashes = originalFileHashes;
+        auto savedHashes = libraryFileHashes(library.path());
+        expectedHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        savedHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        QCOMPARE(savedHashes, expectedHashes);
+    }
+
+    void opensBrokenStickyLinkReadOnlyAndOffersRepairCopy()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        const QByteArray originalChapter(
+            "<p>Before.</p><p>Question <span class=\"ph-mark\" data-sid=\"s-missing\" "
+            "contenteditable=\"false\">⚑</span></p><p>After.</p>");
+        const QByteArray originalStickies("[]");
+        QTemporaryDir library = makeSingleChapterLibrary(originalChapter, originalStickies);
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        auto *repairCopy = window.findChild<QPushButton *>("chapter-repair-copy");
+        QVERIFY(editor);
+        QVERIFY(state);
+        QVERIFY(repairCopy);
+        QVERIFY(editor->isReadOnly());
+        QVERIFY(state->text().contains("s-missing"));
+        QVERIFY(state->text().contains("stickies.json"));
+        QVERIFY(repairCopy->isVisible());
+
+        const QString copyPath = QDir(privateData.path()).filePath("chapter-repair.html");
+        QTimer::singleShot(0, [&copyPath] {
+            auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget());
+            if (dialog) {
+                dialog->selectFile(copyPath);
+                QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+            }
+        });
+        repairCopy->click();
+
+        QFile copy(copyPath);
+        QVERIFY(copy.open(QIODevice::ReadOnly));
+        QCOMPARE(copy.readAll(), originalChapter);
+        QFile unchanged(QDir(library.path()).filePath("book-1/chapters/chapter-a.html"));
+        QVERIFY(unchanged.open(QIODevice::ReadOnly));
+        QCOMPARE(unchanged.readAll(), originalChapter);
+        QFile unchangedStickies(QDir(library.path()).filePath("book-1/stickies.json"));
+        QVERIFY(unchangedStickies.open(QIODevice::ReadOnly));
+        QCOMPARE(unchangedStickies.readAll(), originalStickies);
+    }
+
+    void opensBrokenSectionGhostAndDarlingLinksReadOnly()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        struct BrokenLinkCase {
+            QByteArray chapter;
+            QString id;
+            QString recordFile;
+        };
+        const BrokenLinkCase cases[] = {
+            {QByteArrayLiteral("<p class=\"ghost\" data-sec-id=\"sec-missing\">Outline</p>"),
+             QStringLiteral("sec-missing"), QStringLiteral("book.json sectionNotes")},
+            {QByteArrayLiteral("<p class=\"scene-break\" data-sec-brk=\"sec-missing\">***</p>"),
+             QStringLiteral("sec-missing"), QStringLiteral("book.json sectionNotes")},
+            {QByteArrayLiteral("<p>Text<span class=\"darling-anchor\" data-did=\"d-missing\"></span></p>"),
+             QStringLiteral("d-missing"), QStringLiteral("darlings.json")}};
+
+        for (const BrokenLinkCase &testCase : cases) {
+            QTemporaryDir library = makeSingleChapterLibrary(testCase.chapter);
+            QVERIFY(library.isValid());
+            const auto originalHashes = libraryFileHashes(library.path());
+
+            LibraryWindow window;
+            QVERIFY(window.openLibrary(library.path()));
+            openSingleChapter(&window);
+
+            auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+            auto *state = window.findChild<QLabel *>("chapter-save-state");
+            auto *repairCopy = window.findChild<QPushButton *>("chapter-repair-copy");
+            QVERIFY(editor);
+            QVERIFY(state);
+            QVERIFY(repairCopy);
+            QVERIFY(editor->isReadOnly());
+            QVERIFY(state->text().contains(testCase.id));
+            QVERIFY(state->text().contains(testCase.recordFile));
+            QVERIFY(repairCopy->isVisible());
+
+            window.close();
+            QApplication::processEvents();
+            QCOMPARE(libraryFileHashes(library.path()), originalHashes);
+        }
     }
 };
 

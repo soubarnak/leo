@@ -13,18 +13,27 @@
 #include <QCursor>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDropEvent>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
+#include <QInputMethodEvent>
+#include <QKeyEvent>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -33,6 +42,9 @@
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <functional>
+#include <utility>
 
 namespace {
 
@@ -62,7 +74,336 @@ void addBook(QTreeWidgetItem *parent, const Book &book)
     }
 }
 
+QString canonicalOrCleanPath(const QString &path)
+{
+    const QFileInfo info(path);
+    const QString canonicalPath = info.canonicalFilePath();
+    if (!canonicalPath.isEmpty()) {
+        return QDir::cleanPath(canonicalPath);
+    }
+    const QFileInfo parentInfo(info.absolutePath());
+    const QString parentPath = parentInfo.canonicalFilePath().isEmpty()
+                                   ? QDir::cleanPath(info.absolutePath())
+                                   : parentInfo.canonicalFilePath();
+    return QDir::cleanPath(QDir(parentPath).filePath(info.fileName()));
 }
+
+bool readJsonArray(const QString &libraryPath,
+                   const QString &relativePath,
+                   QSet<QString> *ids,
+                   QHash<QString, QString> *chapterIds,
+                   QString *error)
+{
+    const QString absolutePath = QDir(libraryPath).filePath(relativePath);
+    if (!QFileInfo::exists(absolutePath)) {
+        *error = QStringLiteral("%1 is missing.").arg(relativePath);
+        return false;
+    }
+
+    QByteArray bytes;
+    QString readError;
+    if (!LibraryPersistence::readLibraryFile(libraryPath, relativePath, &bytes, &readError)) {
+        *error = QStringLiteral("%1 could not be read: %2").arg(relativePath, readError);
+        return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isArray()) {
+        *error = QStringLiteral("%1 is not a valid JSON array.").arg(relativePath);
+        return false;
+    }
+
+    const QJsonArray records = document.array();
+    for (int index = 0; index < records.size(); ++index) {
+        if (!records.at(index).isObject()) {
+            *error = QStringLiteral("%1 has an invalid record at position %2.")
+                         .arg(relativePath)
+                         .arg(index + 1);
+            return false;
+        }
+        const QJsonObject record = records.at(index).toObject();
+        const QJsonValue idValue = record.value(QStringLiteral("id"));
+        if (!idValue.isString() || idValue.toString().isEmpty()) {
+            *error = QStringLiteral("%1 has a record without a valid ID.").arg(relativePath);
+            return false;
+        }
+        const QString id = idValue.toString();
+        if (ids->contains(id)) {
+            *error = QStringLiteral("%1 contains duplicate ID '%2'.").arg(relativePath, id);
+            return false;
+        }
+        ids->insert(id);
+        if (chapterIds) {
+            const QJsonValue chapterValue = record.value(QStringLiteral("chapterId"));
+            if (!chapterValue.isUndefined() && !chapterValue.isNull() &&
+                !chapterValue.isString()) {
+                *error = QStringLiteral("%1 has an invalid chapterId for '%2'.")
+                             .arg(relativePath, id);
+                return false;
+            }
+            if (chapterValue.isString()) {
+                chapterIds->insert(id, chapterValue.toString());
+            }
+        }
+    }
+    return true;
+}
+
+LegacyChapterLinkContext loadChapterLinks(const QString &libraryPath,
+                                          const QString &bookId,
+                                          const QString &chapterId)
+{
+    LegacyChapterLinkContext links;
+    links.chapterId = chapterId;
+    const QString bookDirectory = bookId + QLatin1Char('/');
+    readJsonArray(libraryPath, bookDirectory + QStringLiteral("stickies.json"),
+                  &links.stickyIds, &links.stickyChapterIds, &links.stickyReadError);
+    readJsonArray(libraryPath, bookDirectory + QStringLiteral("darlings.json"),
+                  &links.darlingIds, &links.darlingChapterIds, &links.darlingReadError);
+
+    const QString metadataPath = bookDirectory + QStringLiteral("book.json");
+    QByteArray metadataBytes;
+    QString readError;
+    if (!LibraryPersistence::readLibraryFile(libraryPath, metadataPath,
+                                             &metadataBytes, &readError)) {
+        links.sectionReadError = QStringLiteral("%1 could not be read: %2")
+                                     .arg(metadataPath, readError);
+        return links;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument metadataDocument = QJsonDocument::fromJson(metadataBytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !metadataDocument.isObject()) {
+        links.sectionReadError = QStringLiteral("%1 is not a valid JSON object.")
+                                     .arg(metadataPath);
+        return links;
+    }
+
+    const QJsonValue sectionNotesValue =
+        metadataDocument.object().value(QStringLiteral("sectionNotes"));
+    if (sectionNotesValue.isUndefined()) {
+        return links;
+    }
+    if (!sectionNotesValue.isObject()) {
+        links.sectionReadError = QStringLiteral("%1 has invalid sectionNotes metadata.")
+                                     .arg(metadataPath);
+        return links;
+    }
+
+    const QJsonValue chapterSections =
+        sectionNotesValue.toObject().value(chapterId);
+    if (chapterSections.isUndefined()) {
+        return links;
+    }
+    if (!chapterSections.isArray()) {
+        links.sectionReadError = QStringLiteral("%1 has invalid section notes for chapter '%2'.")
+                                     .arg(metadataPath, chapterId);
+        return links;
+    }
+    const QJsonArray sections = chapterSections.toArray();
+    for (int index = 0; index < sections.size(); ++index) {
+        if (!sections.at(index).isObject()) {
+            links.sectionReadError = QStringLiteral(
+                "%1 has an invalid section at position %2 for chapter '%3'.")
+                                         .arg(metadataPath)
+                                         .arg(index + 1)
+                                         .arg(chapterId);
+            return links;
+        }
+        const QJsonValue idValue = sections.at(index).toObject().value(QStringLiteral("id"));
+        if (!idValue.isString() || idValue.toString().isEmpty()) {
+            links.sectionReadError = QStringLiteral(
+                "%1 has a section without a valid ID for chapter '%2'.")
+                                         .arg(metadataPath, chapterId);
+            return links;
+        }
+        const QString id = idValue.toString();
+        if (links.sectionIds.contains(id)) {
+            links.sectionReadError = QStringLiteral(
+                "%1 contains duplicate section ID '%2' for chapter '%3'.")
+                                         .arg(metadataPath, id, chapterId);
+            return links;
+        }
+        links.sectionIds.insert(id);
+    }
+    return links;
+}
+
+QStringList protectedTokens(const LegacyChapterDocument &document)
+{
+    QStringList tokens;
+    for (const LegacyChapterFragment &fragment : document.fragments) {
+        if (fragment.kind == LegacyChapterContentKind::Protected) {
+            tokens.append(fragment.token);
+        }
+    }
+    return tokens;
+}
+
+}
+
+class ProtectedChapterEditor final : public QPlainTextEdit {
+public:
+    explicit ProtectedChapterEditor(QWidget *parent = nullptr)
+        : QPlainTextEdit(parent)
+    {
+    }
+
+    void setProtectedTokens(const QStringList &tokens)
+    {
+        protectedTokens_ = tokens;
+    }
+
+    void setRefusalHandler(std::function<void()> handler)
+    {
+        refusalHandler_ = std::move(handler);
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        const QTextCursor cursor = textCursor();
+        const bool selectionTouches = selectionTouchesProtected(cursor);
+        bool refuse = false;
+
+        if (event->matches(QKeySequence::Copy) || event->matches(QKeySequence::Cut)) {
+            refuse = selectionTouches;
+        } else if (event->matches(QKeySequence::Paste)) {
+            refuse = selectionTouches || cursorInsideProtected(cursor.position());
+        } else if (!cursor.hasSelection() && event->key() == Qt::Key_Backspace) {
+            refuse = deletesProtected(cursor.position(), true);
+        } else if (!cursor.hasSelection() && event->key() == Qt::Key_Delete) {
+            refuse = deletesProtected(cursor.position(), false);
+        } else if (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete ||
+                   (!event->text().isEmpty() &&
+                    !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier |
+                                             Qt::MetaModifier)))) {
+            refuse = selectionTouches || cursorInsideProtected(cursor.position());
+        }
+
+        if (refuse) {
+            reportRefusal();
+            event->accept();
+            return;
+        }
+        QPlainTextEdit::keyPressEvent(event);
+    }
+
+    void inputMethodEvent(QInputMethodEvent *event) override
+    {
+        const QTextCursor cursor = textCursor();
+        if (selectionTouchesProtected(cursor) || cursorInsideProtected(cursor.position())) {
+            reportRefusal();
+            event->accept();
+            return;
+        }
+        QPlainTextEdit::inputMethodEvent(event);
+    }
+
+    void insertFromMimeData(const QMimeData *source) override
+    {
+        const QTextCursor cursor = textCursor();
+        if (selectionTouchesProtected(cursor) || cursorInsideProtected(cursor.position())) {
+            reportRefusal();
+            return;
+        }
+        QPlainTextEdit::insertFromMimeData(source);
+    }
+
+    void dropEvent(QDropEvent *event) override
+    {
+        const QTextCursor selection = textCursor();
+        const int dropPosition = cursorForPosition(event->position().toPoint()).position();
+        bool refuse = cursorInsideProtected(dropPosition);
+        if (event->source() == this) {
+            refuse = refuse || selectionTouchesProtected(selection) ||
+                     movesSelectionAcrossProtected(selection, dropPosition);
+        }
+        if (refuse) {
+            reportRefusal();
+            event->setDropAction(Qt::IgnoreAction);
+            event->accept();
+            return;
+        }
+        QPlainTextEdit::dropEvent(event);
+    }
+
+private:
+    bool selectionTouchesProtected(const QTextCursor &cursor) const
+    {
+        if (!cursor.hasSelection()) {
+            return false;
+        }
+        const int selectionStart = cursor.selectionStart();
+        const int selectionEnd = cursor.selectionEnd();
+        const QString text = toPlainText();
+        for (const QString &token : protectedTokens_) {
+            const int start = text.indexOf(token);
+            if (start >= 0 && selectionStart < start + token.size() &&
+                selectionEnd > start) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool cursorInsideProtected(int position) const
+    {
+        const QString text = toPlainText();
+        for (const QString &token : protectedTokens_) {
+            const int start = text.indexOf(token);
+            if (start >= 0 && position > start && position < start + token.size()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool deletesProtected(int position, bool backward) const
+    {
+        const QString text = toPlainText();
+        for (const QString &token : protectedTokens_) {
+            const int start = text.indexOf(token);
+            const int end = start + token.size();
+            if (start >= 0 && (backward ? position > start && position <= end
+                                        : position >= start && position < end)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool movesSelectionAcrossProtected(const QTextCursor &selection, int dropPosition) const
+    {
+        if (!selection.hasSelection()) {
+            return false;
+        }
+        const int selectionStart = selection.selectionStart();
+        const int selectionEnd = selection.selectionEnd();
+        const QString text = toPlainText();
+        for (const QString &token : protectedTokens_) {
+            const int start = text.indexOf(token);
+            if (start < 0) {
+                continue;
+            }
+            const int end = start + token.size();
+            if ((selectionEnd <= start && dropPosition >= end) ||
+                (selectionStart >= end && dropPosition <= start)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void reportRefusal()
+    {
+        if (refusalHandler_) {
+            refusalHandler_();
+        }
+    }
+
+    QStringList protectedTokens_;
+    std::function<void()> refusalHandler_;
+};
 
 class HoverFadeFilter final : public QObject {
 public:
@@ -175,6 +516,11 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     saveButton_->setObjectName(QStringLiteral("chapter-save"));
     connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
     editorToolbar->addWidget(saveButton_);
+    repairCopyButton_ = new QPushButton(QStringLiteral("Save Repair Copy…"), editorChrome_);
+    repairCopyButton_->setObjectName(QStringLiteral("chapter-repair-copy"));
+    repairCopyButton_->setVisible(false);
+    connect(repairCopyButton_, &QPushButton::clicked, this, &LibraryWindow::saveRepairCopy);
+    editorToolbar->addWidget(repairCopyButton_);
     chromeLayout->addLayout(editorToolbar);
 
     editorState_ = new QLabel(editorChrome_);
@@ -183,9 +529,15 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     chromeLayout->addWidget(editorState_);
     editorLayout->addWidget(editorChrome_);
 
-    chapterEditor_ = new QPlainTextEdit(editorPage_);
+    chapterEditor_ = new ProtectedChapterEditor(editorPage_);
     chapterEditor_->setObjectName(QStringLiteral("chapter-editor"));
     chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
+    static_cast<ProtectedChapterEditor *>(chapterEditor_)->setRefusalHandler([this] {
+        const QString message = QStringLiteral(
+            "Edit refused because it crosses protected legacy content. Protected source and linked records remain unchanged.");
+        updateEditorState(message);
+        statusBar()->showMessage(QStringLiteral("Edit refused; protected content is unchanged"));
+    });
     editorLayout->addWidget(chapterEditor_, 1);
     chromeHoverFilter_ = new HoverFadeFilter(editorChrome_, editorChrome_);
     saveTimer_ = new QTimer(this);
@@ -196,6 +548,18 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         if (loadingChapter_ || chapterReadOnly_) {
             return;
         }
+        const QString editedText = chapterEditor_->toPlainText();
+        QString validationError;
+        if (!LegacyChapterCodec::validateEditedText(chapterDocument_, editedText,
+                                                    &validationError)) {
+            loadingChapter_ = true;
+            chapterEditor_->setPlainText(lastValidEditorText_);
+            loadingChapter_ = false;
+            updateEditorState(validationError);
+            statusBar()->showMessage(QStringLiteral("Edit refused; protected content is unchanged"));
+            return;
+        }
+        lastValidEditorText_ = editedText;
         chapterDirty_ = true;
         updateEditorState();
         saveTimer_->start();
@@ -320,16 +684,22 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
         bookId + QStringLiteral("/chapters/") + chapterId + QStringLiteral(".html");
     editorTitle_->setText(item->parent()->text(0) + QStringLiteral(" — ") + item->text(0));
     sourceHash_.clear();
+    sourceBytes_.clear();
+    sourceAvailable_ = false;
+    repairCopyButton_->setVisible(false);
     chapterDirty_ = false;
     saveFailed_ = false;
     chapterReadOnly_ = true;
-    chapterHasUtf8Bom_ = false;
 
     QByteArray source;
     QString readError;
     loadingChapter_ = true;
     if (!LibraryPersistence::readLibraryFile(activeLibraryPath_, activeChapterRelativePath_,
                                              &source, &readError)) {
+        chapterDocument_ = {};
+        chapterLinks_ = {};
+        lastValidEditorText_.clear();
+        static_cast<ProtectedChapterEditor *>(chapterEditor_)->setProtectedTokens({});
         chapterEditor_->clear();
         editorState_->setText(QStringLiteral("Read-only: %1").arg(readError));
         chapterEditor_->setReadOnly(true);
@@ -340,18 +710,28 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
         return true;
     }
 
-    const LegacyChapterDocument document = LegacyChapterCodec::decode(source);
+    sourceBytes_ = source;
+    sourceAvailable_ = true;
+    chapterLinks_ = loadChapterLinks(activeLibraryPath_, bookId, chapterId);
+    chapterDocument_ = LegacyChapterCodec::decode(source, chapterLinks_);
+    static_cast<ProtectedChapterEditor *>(chapterEditor_)
+        ->setProtectedTokens(protectedTokens(chapterDocument_));
     sourceHash_ = LibraryPersistence::hash(source);
-    chapterHasUtf8Bom_ = document.hasUtf8Bom;
-    chapterReadOnly_ = !document.editable();
+    chapterReadOnly_ = !chapterDocument_.editable();
     chapterEditor_->setReadOnly(chapterReadOnly_);
-    chapterEditor_->setPlainText(chapterReadOnly_ ? QString::fromUtf8(source) : document.text);
+    chapterEditor_->setPlainText(chapterReadOnly_ ? QString::fromUtf8(source)
+                                                 : chapterDocument_.text);
     chapterEditor_->moveCursor(QTextCursor::Start);
     loadingChapter_ = false;
+    lastValidEditorText_ = chapterEditor_->toPlainText();
+    repairCopyButton_->setVisible(chapterReadOnly_);
 
     if (chapterReadOnly_) {
         editorState_->setText(QStringLiteral("Read-only: %1 The original chapter stays unchanged.")
-                                  .arg(document.refusalReason));
+                                  .arg(chapterDocument_.refusalReason));
+    } else if (chapterDocument_.hasProtectedContent()) {
+        editorState_->setText(QStringLiteral(
+            "Safe prose is editable. Protected legacy content stays unchanged."));
     } else {
         editorState_->setText(QStringLiteral(
             "Plain prose is editable. Changes save after a short pause."));
@@ -380,7 +760,7 @@ bool LibraryWindow::saveCurrentChapter()
 
     QString encodeError;
     const QByteArray newBytes = LegacyChapterCodec::encode(
-        chapterEditor_->toPlainText(), chapterHasUtf8Bom_, &encodeError);
+        chapterDocument_, chapterEditor_->toPlainText(), &encodeError);
     if (!encodeError.isEmpty()) {
         saveFailed_ = true;
         updateEditorState(encodeError);
@@ -400,9 +780,14 @@ bool LibraryWindow::saveCurrentChapter()
     }
 
     sourceHash_ = result.savedHash;
+    sourceBytes_ = newBytes;
+    chapterDocument_.text = chapterEditor_->toPlainText();
+    lastValidEditorText_ = chapterDocument_.text;
     chapterDirty_ = false;
     saveFailed_ = false;
-    updateEditorState(QStringLiteral("Plain prose is editable. Changes save after a short pause."));
+    updateEditorState(chapterDocument_.hasProtectedContent()
+                          ? QStringLiteral("Protected legacy content stays unchanged. Changes are saved.")
+                          : QStringLiteral("Plain prose is editable. Changes save after a short pause."));
     return true;
 }
 
@@ -413,6 +798,43 @@ bool LibraryWindow::savePendingEdits()
         return true;
     }
     return saveCurrentChapter();
+}
+
+void LibraryWindow::saveRepairCopy()
+{
+    if (!sourceAvailable_ || !chapterReadOnly_) {
+        return;
+    }
+
+    QFileDialog dialog(this, QStringLiteral("Save a separate repair copy"));
+    dialog.setObjectName(QStringLiteral("repair-copy-dialog"));
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setNameFilter(QStringLiteral("HTML files (*.html);;All files (*)"));
+    dialog.setOption(QFileDialog::DontUseNativeDialog);
+    const QString sourceName = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    dialog.selectFile(QDir::home().filePath(sourceName + QStringLiteral("-repair.html")));
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return;
+    }
+
+    const QString destinationPath = QFileInfo(dialog.selectedFiles().first()).absoluteFilePath();
+    const QString sourcePath = QFileInfo(
+        QDir(activeLibraryPath_).filePath(activeChapterRelativePath_)).absoluteFilePath();
+    if (canonicalOrCleanPath(destinationPath) == canonicalOrCleanPath(sourcePath)) {
+        updateEditorState(QStringLiteral("Choose a separate path. The Library chapter was not changed."));
+        return;
+    }
+
+    QSaveFile copy(destinationPath);
+    if (!copy.open(QIODevice::WriteOnly) || copy.write(sourceBytes_) != sourceBytes_.size() ||
+        !copy.commit()) {
+        updateEditorState(QStringLiteral("Could not save repair copy: %1").arg(copy.errorString()));
+        return;
+    }
+    updateEditorState(QStringLiteral("Repair copy saved to %1. The Library chapter stays unchanged.")
+                          .arg(destinationPath));
+    statusBar()->showMessage(QStringLiteral("Separate repair copy saved"));
 }
 
 void LibraryWindow::updateEditorState(const QString &message)
