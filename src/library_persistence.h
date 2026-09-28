@@ -17,7 +17,7 @@ public:
                                 const QString &relativePath,
                                 QByteArray *bytes,
                                 QString *error);
-    static PersistenceResult recoverLibrary(const QString &libraryPath);
+    static PersistenceResult recoverPendingSaves(const QString &libraryPath);
     static PersistenceResult saveFile(const QString &libraryPath,
                                       const QString &relativePath,
                                       const QByteArray &expectedHash,

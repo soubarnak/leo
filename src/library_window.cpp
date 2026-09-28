@@ -7,13 +7,17 @@
 #include "release_check_dialog.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
@@ -60,6 +64,75 @@ void addBook(QTreeWidgetItem *parent, const Book &book)
 
 }
 
+class HoverFadeFilter final : public QObject {
+public:
+    explicit HoverFadeFilter(QWidget *container, QObject *parent)
+        : QObject(parent), container_(container), effect_(new QGraphicsOpacityEffect(container))
+    {
+        container_->setGraphicsEffect(effect_);
+        effect_->setOpacity(0.0);
+        container_->installEventFilter(this);
+        for (QWidget *child : container_->findChildren<QWidget *>()) {
+            child->installEventFilter(this);
+        }
+    }
+
+    void setAttention(bool attention)
+    {
+        attention_ = attention;
+        refresh();
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (qobject_cast<QWidget *>(watched)) {
+            switch (event->type()) {
+            case QEvent::Enter:
+            case QEvent::HoverEnter:
+            case QEvent::FocusIn:
+                refresh();
+                break;
+            case QEvent::Leave:
+            case QEvent::HoverLeave:
+            case QEvent::FocusOut:
+                QTimer::singleShot(0, this, [this] { refresh(); });
+                break;
+            default:
+                break;
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    bool pointerInside() const
+    {
+        return container_->rect().contains(container_->mapFromGlobal(QCursor::pos()));
+    }
+
+    bool focusInside() const
+    {
+        QWidget *focus = QApplication::focusWidget();
+        while (focus) {
+            if (focus == container_) {
+                return true;
+            }
+            focus = focus->parentWidget();
+        }
+        return false;
+    }
+
+    void refresh()
+    {
+        effect_->setOpacity(attention_ || pointerInside() || focusInside() ? 1.0 : 0.0);
+    }
+
+    QWidget *container_;
+    QGraphicsOpacityEffect *effect_;
+    bool attention_ = false;
+};
+
 LibraryWindow::LibraryWindow(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -81,8 +154,11 @@ LibraryWindow::LibraryWindow(QWidget *parent)
 
     editorPage_ = new QWidget(pages_);
     auto *editorLayout = new QVBoxLayout(editorPage_);
+    editorChrome_ = new QWidget(editorPage_);
+    auto *chromeLayout = new QVBoxLayout(editorChrome_);
+    chromeLayout->setContentsMargins(0, 0, 0, 0);
     auto *editorToolbar = new QHBoxLayout;
-    auto *backButton = new QPushButton(QStringLiteral("‹ Library"), editorPage_);
+    auto *backButton = new QPushButton(QStringLiteral("‹ Library"), editorChrome_);
     backButton->setAccessibleName(QStringLiteral("Return to Library"));
     connect(backButton, &QPushButton::clicked, this, [this] {
         if (savePendingEdits()) {
@@ -91,25 +167,27 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         }
     });
     editorToolbar->addWidget(backButton);
-    editorTitle_ = new QLabel(editorPage_);
+    editorTitle_ = new QLabel(editorChrome_);
     editorTitle_->setObjectName(QStringLiteral("chapter-title"));
     editorTitle_->setAccessibleName(QStringLiteral("Current chapter"));
     editorToolbar->addWidget(editorTitle_, 1);
-    saveButton_ = new QPushButton(QStringLiteral("Save"), editorPage_);
+    saveButton_ = new QPushButton(QStringLiteral("Save"), editorChrome_);
     saveButton_->setObjectName(QStringLiteral("chapter-save"));
     connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
     editorToolbar->addWidget(saveButton_);
-    editorLayout->addLayout(editorToolbar);
+    chromeLayout->addLayout(editorToolbar);
 
-    editorState_ = new QLabel(editorPage_);
+    editorState_ = new QLabel(editorChrome_);
     editorState_->setObjectName(QStringLiteral("chapter-save-state"));
     editorState_->setWordWrap(true);
-    editorLayout->addWidget(editorState_);
+    chromeLayout->addWidget(editorState_);
+    editorLayout->addWidget(editorChrome_);
 
     chapterEditor_ = new QPlainTextEdit(editorPage_);
     chapterEditor_->setObjectName(QStringLiteral("chapter-editor"));
     chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
     editorLayout->addWidget(chapterEditor_, 1);
+    chromeHoverFilter_ = new HoverFadeFilter(editorChrome_, editorChrome_);
     saveTimer_ = new QTimer(this);
     saveTimer_->setSingleShot(true);
     saveTimer_->setInterval(800);
@@ -339,6 +417,7 @@ bool LibraryWindow::savePendingEdits()
 
 void LibraryWindow::updateEditorState(const QString &message)
 {
+    chromeHoverFilter_->setAttention(saveFailed_);
     if (!message.isEmpty()) {
         editorState_->setText(chapterDirty_ && saveFailed_
                                   ? QStringLiteral("Unsaved changes — %1 Retry with Save.").arg(message)

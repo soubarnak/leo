@@ -12,6 +12,7 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QWidget;
 class QCloseEvent;
+class HoverFadeFilter;
 
 class LibraryWindow final : public QMainWindow {
 public:
@@ -36,6 +37,8 @@ private:
     QLabel *editorState_ = nullptr;
     QPlainTextEdit *chapterEditor_ = nullptr;
     QPushButton *saveButton_ = nullptr;
+    QWidget *editorChrome_ = nullptr;
+    HoverFadeFilter *chromeHoverFilter_ = nullptr;
     QTimer *saveTimer_ = nullptr;
     QWidget *refusalPage_ = nullptr;
     QLabel *refusal_ = nullptr;

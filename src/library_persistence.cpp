@@ -823,7 +823,7 @@ bool LibraryPersistence::readLibraryFile(const QString &libraryPath,
     return readFile(target, bytes, error);
 }
 
-PersistenceResult LibraryPersistence::recoverLibrary(const QString &libraryPath)
+PersistenceResult LibraryPersistence::recoverPendingSaves(const QString &libraryPath)
 {
     const QString libraryRoot = canonicalDirectory(libraryPath);
     const QString directory = journalDirectory();
@@ -869,7 +869,7 @@ PersistenceResult LibraryPersistence::saveFile(const QString &libraryPath,
                                                 const QByteArray &newBytes)
 {
     const QString libraryRoot = canonicalDirectory(libraryPath);
-    const PersistenceResult recovery = recoverLibrary(libraryRoot);
+    const PersistenceResult recovery = recoverPendingSaves(libraryRoot);
     if (!recovery.ok) {
         return recovery;
     }
