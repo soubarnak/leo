@@ -1,35 +1,48 @@
 #include "library_window.h"
 
 #include "app_paths.h"
+#include "legacy_chapter_codec.h"
+#include "library_persistence.h"
 #include "library_reader.h"
 #include "release_check_dialog.h"
 
 #include <QAction>
+#include <QCloseEvent>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTextCursor>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
 
+constexpr int ItemKindRole = Qt::UserRole + 1;
+constexpr int BookIdRole = Qt::UserRole + 2;
+constexpr int ChapterIdRole = Qt::UserRole + 3;
+constexpr int ChapterItemKind = 1;
+
 void addBook(QTreeWidgetItem *parent, const Book &book)
 {
     auto *bookItem = new QTreeWidgetItem(parent, {book.title, book.author});
     bookItem->setToolTip(0, book.title);
     bookItem->setToolTip(1, book.author);
+    bookItem->setData(0, BookIdRole, book.id);
 
     for (int index = 0; index < book.chapters.size(); ++index) {
         const Chapter &chapter = book.chapters.at(index);
@@ -39,6 +52,9 @@ void addBook(QTreeWidgetItem *parent, const Book &book)
         }
         auto *chapterItem = new QTreeWidgetItem(bookItem, {label});
         chapterItem->setToolTip(0, label);
+        chapterItem->setData(0, ItemKindRole, ChapterItemKind);
+        chapterItem->setData(0, BookIdRole, book.id);
+        chapterItem->setData(0, ChapterIdRole, chapter.id);
     }
 }
 
@@ -60,6 +76,53 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     tree_->setDragEnabled(false);
     tree_->setAcceptDrops(false);
+    connect(tree_, &QTreeWidget::itemActivated, this,
+            [this](QTreeWidgetItem *item, int) { openChapter(item); });
+
+    editorPage_ = new QWidget(pages_);
+    auto *editorLayout = new QVBoxLayout(editorPage_);
+    auto *editorToolbar = new QHBoxLayout;
+    auto *backButton = new QPushButton(QStringLiteral("‹ Library"), editorPage_);
+    backButton->setAccessibleName(QStringLiteral("Return to Library"));
+    connect(backButton, &QPushButton::clicked, this, [this] {
+        if (savePendingEdits()) {
+            pages_->setCurrentWidget(tree_);
+            statusBar()->showMessage(QStringLiteral("Library open: %1").arg(activeLibraryPath_));
+        }
+    });
+    editorToolbar->addWidget(backButton);
+    editorTitle_ = new QLabel(editorPage_);
+    editorTitle_->setObjectName(QStringLiteral("chapter-title"));
+    editorTitle_->setAccessibleName(QStringLiteral("Current chapter"));
+    editorToolbar->addWidget(editorTitle_, 1);
+    saveButton_ = new QPushButton(QStringLiteral("Save"), editorPage_);
+    saveButton_->setObjectName(QStringLiteral("chapter-save"));
+    connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
+    editorToolbar->addWidget(saveButton_);
+    editorLayout->addLayout(editorToolbar);
+
+    editorState_ = new QLabel(editorPage_);
+    editorState_->setObjectName(QStringLiteral("chapter-save-state"));
+    editorState_->setWordWrap(true);
+    editorLayout->addWidget(editorState_);
+
+    chapterEditor_ = new QPlainTextEdit(editorPage_);
+    chapterEditor_->setObjectName(QStringLiteral("chapter-editor"));
+    chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
+    editorLayout->addWidget(chapterEditor_, 1);
+    saveTimer_ = new QTimer(this);
+    saveTimer_->setSingleShot(true);
+    saveTimer_->setInterval(800);
+    connect(saveTimer_, &QTimer::timeout, this, [this] { saveCurrentChapter(); });
+    connect(chapterEditor_, &QPlainTextEdit::textChanged, this, [this] {
+        if (loadingChapter_ || chapterReadOnly_) {
+            return;
+        }
+        chapterDirty_ = true;
+        saveFailed_ = false;
+        updateEditorState(QStringLiteral("Unsaved changes. LEO will save shortly."));
+        saveTimer_->start();
+    });
 
     refusalPage_ = new QWidget(pages_);
     auto *refusalLayout = new QVBoxLayout(refusalPage_);
@@ -75,6 +138,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     refusalLayout->addStretch();
 
     pages_->addWidget(tree_);
+    pages_->addWidget(editorPage_);
     pages_->addWidget(refusalPage_);
     setCentralWidget(pages_);
     statusBar()->showMessage(QStringLiteral("No Library open"));
@@ -125,10 +189,28 @@ QString LibraryWindow::selectLibraryDirectory(QWidget *parent, const QString &st
 
 bool LibraryWindow::openLibrary(const QString &path)
 {
+    if (!savePendingEdits()) {
+        return false;
+    }
+
+    const PersistenceResult recovery = LibraryPersistence::recoverLibrary(path);
+    if (!recovery.ok) {
+        tree_->clear();
+        activeLibraryPath_.clear();
+        refusal_->setText(QStringLiteral(
+            "LEO paused Library opening during save recovery.\n\n%1\n\n"
+            "The current Library file was left untouched.")
+                              .arg(recovery.error));
+        pages_->setCurrentWidget(refusalPage_);
+        statusBar()->showMessage(QStringLiteral("Library recovery needs attention"));
+        return false;
+    }
+
     const LibraryReadResult result = LibraryReader::read(path);
     tree_->clear();
     if (!result.ok()) {
         qWarning().noquote() << "Library open refused:" << result.error;
+        activeLibraryPath_.clear();
         refusal_->setText(QStringLiteral(
             "LEO refused to open this Library.\n\n%1\n\nNo Library files were changed.")
                               .arg(result.error));
@@ -137,6 +219,7 @@ bool LibraryWindow::openLibrary(const QString &path)
         return false;
     }
 
+    activeLibraryPath_ = result.library.path;
     for (const Author &author : result.library.authors) {
         auto *authorItem = new QTreeWidgetItem(tree_, {author.name});
         for (const Shelf &shelf : author.shelves) {
@@ -156,12 +239,145 @@ bool LibraryWindow::openLibrary(const QString &path)
 
     tree_->expandAll();
     pages_->setCurrentWidget(tree_);
-    statusBar()->showMessage(QStringLiteral("Read-only Library: %1").arg(result.library.path));
+    statusBar()->showMessage(QStringLiteral("Library open: %1").arg(result.library.path));
     return true;
+}
+
+bool LibraryWindow::openChapter(QTreeWidgetItem *item)
+{
+    if (!item || item->data(0, ItemKindRole).toInt() != ChapterItemKind ||
+        !savePendingEdits()) {
+        return false;
+    }
+
+    const QString bookId = item->data(0, BookIdRole).toString();
+    const QString chapterId = item->data(0, ChapterIdRole).toString();
+    activeChapterRelativePath_ =
+        bookId + QStringLiteral("/chapters/") + chapterId + QStringLiteral(".html");
+    editorTitle_->setText(item->parent()->text(0) + QStringLiteral(" — ") + item->text(0));
+    sourceHash_.clear();
+    chapterDirty_ = false;
+    saveFailed_ = false;
+    chapterReadOnly_ = true;
+    chapterHasUtf8Bom_ = false;
+
+    QByteArray source;
+    QString readError;
+    loadingChapter_ = true;
+    if (!LibraryPersistence::readLibraryFile(activeLibraryPath_, activeChapterRelativePath_,
+                                             &source, &readError)) {
+        chapterEditor_->clear();
+        editorState_->setText(QStringLiteral("Read-only: %1").arg(readError));
+        chapterEditor_->setReadOnly(true);
+        saveButton_->setEnabled(false);
+        loadingChapter_ = false;
+        pages_->setCurrentWidget(editorPage_);
+        statusBar()->showMessage(QStringLiteral("Chapter could not be opened safely"));
+        return true;
+    }
+
+    const LegacyChapterDocument document = LegacyChapterCodec::decode(source);
+    sourceHash_ = LibraryPersistence::hash(source);
+    chapterHasUtf8Bom_ = document.hasUtf8Bom;
+    chapterReadOnly_ = !document.editable();
+    chapterEditor_->setReadOnly(chapterReadOnly_);
+    chapterEditor_->setPlainText(chapterReadOnly_ ? QString::fromUtf8(source) : document.text);
+    chapterEditor_->moveCursor(QTextCursor::Start);
+    loadingChapter_ = false;
+
+    if (chapterReadOnly_) {
+        editorState_->setText(QStringLiteral("Read-only: %1 The original chapter stays unchanged.")
+                                  .arg(document.refusalReason));
+    } else {
+        editorState_->setText(QStringLiteral(
+            "Plain prose is editable. Other markup opens as read-only source text."));
+    }
+    saveButton_->setText(QStringLiteral("Save"));
+    saveButton_->setEnabled(false);
+    pages_->setCurrentWidget(editorPage_);
+    statusBar()->showMessage(chapterReadOnly_
+                                 ? QStringLiteral("Chapter is read-only")
+                                 : QStringLiteral("Chapter open; no Library files changed"));
+    if (!chapterReadOnly_) {
+        chapterEditor_->setFocus();
+    }
+    return true;
+}
+
+bool LibraryWindow::saveCurrentChapter()
+{
+    saveTimer_->stop();
+    if (!chapterDirty_) {
+        return true;
+    }
+    if (chapterReadOnly_) {
+        return false;
+    }
+
+    QString encodeError;
+    const QByteArray newBytes = LegacyChapterCodec::encode(
+        chapterEditor_->toPlainText(), chapterHasUtf8Bom_, &encodeError);
+    if (!encodeError.isEmpty()) {
+        saveFailed_ = true;
+        updateEditorState(encodeError);
+        statusBar()->showMessage(QStringLiteral("Unsaved changes — save failed"));
+        return false;
+    }
+
+    const PersistenceResult result = LibraryPersistence::saveFile(
+        activeLibraryPath_, activeChapterRelativePath_, sourceHash_, newBytes);
+    if (!result.ok) {
+        saveFailed_ = true;
+        updateEditorState(result.error);
+        statusBar()->showMessage(result.conflict
+                                     ? QStringLiteral("Unsaved changes — save paused")
+                                     : QStringLiteral("Unsaved changes — save failed"));
+        return false;
+    }
+
+    sourceHash_ = result.savedHash;
+    chapterDirty_ = false;
+    saveFailed_ = false;
+    updateEditorState(QStringLiteral("Saved. Library remains compatible with NEO."));
+    statusBar()->showMessage(QStringLiteral("Chapter saved safely"));
+    return true;
+}
+
+bool LibraryWindow::savePendingEdits()
+{
+    if (!chapterDirty_) {
+        saveTimer_->stop();
+        return true;
+    }
+    return saveCurrentChapter();
+}
+
+void LibraryWindow::updateEditorState(const QString &message)
+{
+    if (!message.isEmpty()) {
+        editorState_->setText(chapterDirty_ && saveFailed_
+                                  ? QStringLiteral("Unsaved changes — %1 Retry with Save.").arg(message)
+                                  : message);
+    }
+    saveButton_->setEnabled(chapterDirty_ && !chapterReadOnly_);
+    saveButton_->setText(saveFailed_ ? QStringLiteral("Retry Save") : QStringLiteral("Save"));
+    setWindowTitle(chapterDirty_ ? QStringLiteral("LEO — unsaved chapter") : QStringLiteral("LEO"));
+}
+
+void LibraryWindow::closeEvent(QCloseEvent *event)
+{
+    if (!savePendingEdits()) {
+        event->ignore();
+        return;
+    }
+    event->accept();
 }
 
 void LibraryWindow::chooseLibrary()
 {
+    if (!savePendingEdits()) {
+        return;
+    }
     const QString path = selectLibraryDirectory(this, defaultPath_);
     if (!path.isEmpty()) {
         openLibrary(path);
