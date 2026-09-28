@@ -224,6 +224,14 @@ private slots:
         QVERIFY(QDir().mkpath(runtime));
         QVERIFY(QDir().mkpath(state));
 
+        QTemporaryDir primaryWorkingDirectory;
+        QVERIFY(primaryWorkingDirectory.isValid());
+        QTemporaryDir secondaryWorkingDirectory;
+        QVERIFY(secondaryWorkingDirectory.isValid());
+        const QString requestedLibrary =
+            QDir(secondaryWorkingDirectory.path()).filePath(QStringLiteral("requested-library"));
+        QVERIFY(QDir().mkpath(requestedLibrary));
+
         QTemporaryDir library;
         QVERIFY(library.isValid());
         QVERIFY(writeLibrary(library.path(), QByteArray("{\"authors\":[],\"shelves\":[]}")));
@@ -233,6 +241,7 @@ private slots:
         const QProcessEnvironment environment = testEnvironment(runtime, state);
         QProcess first;
         first.setProcessEnvironment(environment);
+        first.setWorkingDirectory(primaryWorkingDirectory.path());
         first.start(executable, {library.path()});
         QVERIFY(first.waitForStarted());
         QTRY_VERIFY_WITH_TIMEOUT(first.state() == QProcess::Running, 5000);
@@ -251,16 +260,35 @@ private slots:
 
         QProcess second;
         second.setProcessEnvironment(environment);
-        second.start(executable, {library.path()});
+        second.setWorkingDirectory(secondaryWorkingDirectory.path());
+        second.start(executable, {QStringLiteral("requested-library")});
         QVERIFY(second.waitForStarted());
         const bool secondExited = second.waitForFinished(5000);
         const int secondExitCode = second.exitCode();
         const QProcess::ProcessState firstState = first.state();
+
+        const QString logPath = QDir(state).filePath(QStringLiteral("leo-writer/leo-writer.log"));
+        const QByteArray expectedPath =
+            QDir(requestedLibrary).filePath(QStringLiteral("library.json")).toUtf8();
+        QByteArray logContents;
+        QElapsedTimer requestElapsed;
+        requestElapsed.start();
+        while (!logContents.contains(expectedPath) && requestElapsed.elapsed() < 5000) {
+            QFile log(logPath);
+            if (log.open(QIODevice::ReadOnly)) {
+                logContents = log.readAll();
+            }
+            if (!logContents.contains(expectedPath)) {
+                QTest::qWait(25);
+            }
+        }
+
         stop(&second);
         stop(&first);
         QVERIFY2(secondExited, "Second launch started a second application process");
         QVERIFY2(secondExitCode == 0, second.readAllStandardError().constData());
         QCOMPARE(firstState, QProcess::Running);
+        QVERIFY2(logContents.contains(expectedPath), logContents.constData());
     }
 
     void writesStartupErrorsToPrivateXdgState()

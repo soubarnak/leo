@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
 
 #include <memory>
@@ -58,7 +59,7 @@ int main(int argc, char *argv[])
     QString path;
     const QStringList arguments = parser.positionalArguments();
     if (!arguments.isEmpty()) {
-        path = arguments.first();
+        path = QDir::cleanPath(QFileInfo(arguments.first()).absoluteFilePath());
     }
 
     LibraryWindow window;
