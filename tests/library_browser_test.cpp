@@ -728,6 +728,50 @@ private slots:
         QApplication::processEvents();
         QVERIFY(notice->isVisible());
         QVERIFY(notice->text().contains(QStringLiteral("interrupted save"), Qt::CaseInsensitive));
+
+        openSingleChapter(&window);
+        QVERIFY(notice->isHidden());
+    }
+
+    void failedChapterSaveStaysDirtyAndRetryable()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir stateParent;
+        QVERIFY(privateData.isValid());
+        QVERIFY(stateParent.isValid());
+
+        const QString blockedStateHome = QDir(stateParent.path()).filePath("state-file");
+        writeFile(blockedStateHome, QByteArrayLiteral("not a directory"));
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", blockedStateHome.toLocal8Bit());
+
+        const QByteArray oldBytes("<p>Saved paragraph.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(oldBytes);
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        auto *saveButton = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(state);
+        QVERIFY(saveButton);
+
+        editor->setPlainText(QStringLiteral("Draft that cannot save yet."));
+        QVERIFY(saveButton->isEnabled());
+        saveButton->click();
+
+        QVERIFY(saveButton->isEnabled());
+        QCOMPARE(saveButton->text(), QStringLiteral("Retry Save"));
+        QVERIFY(state->text().contains(QStringLiteral("Unsaved changes")));
+        QVERIFY(state->text().contains(QStringLiteral("Retry with Save")));
+
+        QFile chapter(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY(chapter.open(QIODevice::ReadOnly));
+        QCOMPARE(chapter.readAll(), oldBytes);
     }
 
     void pausesRecoveryWhenLibraryBytesMatchNeitherJournalHash()

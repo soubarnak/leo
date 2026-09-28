@@ -859,6 +859,7 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
         !savePendingEdits()) {
         return false;
     }
+    recoveryNotice_->hide();
 
     const QString bookId = item->data(0, BookIdRole).toString();
     const QString chapterId = item->data(0, ChapterIdRole).toString();

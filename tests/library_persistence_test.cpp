@@ -229,6 +229,46 @@ QList<PersistenceCheckpoint> allCheckpoints()
             PersistenceCheckpoint::AfterJournalCompletion};
 }
 
+QString ioOperationArgument(PersistenceIoOperation operation)
+{
+    switch (operation) {
+    case PersistenceIoOperation::ReadTarget:
+        return QStringLiteral("read-target");
+    case PersistenceIoOperation::WriteTargetStage:
+        return QStringLiteral("write-target-stage");
+    case PersistenceIoOperation::FlushTargetStage:
+        return QStringLiteral("flush-target-stage");
+    case PersistenceIoOperation::RenameTarget:
+        return QStringLiteral("rename-target");
+    case PersistenceIoOperation::FlushTargetDirectory:
+        return QStringLiteral("flush-target-directory");
+    case PersistenceIoOperation::ReadJournal:
+        return QStringLiteral("read-journal");
+    case PersistenceIoOperation::WriteJournalStage:
+        return QStringLiteral("write-journal-stage");
+    case PersistenceIoOperation::FlushJournalStage:
+        return QStringLiteral("flush-journal-stage");
+    case PersistenceIoOperation::RenameJournal:
+        return QStringLiteral("rename-journal");
+    case PersistenceIoOperation::FlushJournalDirectory:
+        return QStringLiteral("flush-journal-directory");
+    }
+    return QStringLiteral("unknown");
+}
+
+QList<PersistenceIoOperation> allIoOperations()
+{
+    return {PersistenceIoOperation::ReadTarget,
+            PersistenceIoOperation::WriteTargetStage,
+            PersistenceIoOperation::FlushTargetStage,
+            PersistenceIoOperation::RenameTarget,
+            PersistenceIoOperation::FlushTargetDirectory,
+            PersistenceIoOperation::WriteJournalStage,
+            PersistenceIoOperation::FlushJournalStage,
+            PersistenceIoOperation::RenameJournal,
+            PersistenceIoOperation::FlushJournalDirectory};
+}
+
 }
 
 class LibraryPersistenceTest final : public QObject {
@@ -309,6 +349,165 @@ private slots:
             auto *notice = window.findChild<QLabel *>("library-recovery-notice");
             QVERIFY(notice);
             QVERIFY2(notice->isVisible(), qPrintable(checkpointArgument(checkpoint)));
+        }
+    }
+
+    void ioFailuresLeaveBytesAndRecoverVisibly()
+    {
+        for (const PersistenceIoOperation operation : allIoOperations()) {
+            QTemporaryDir privateData;
+            QTemporaryDir privateState;
+            QTemporaryDir library;
+            QVERIFY(privateData.isValid());
+            QVERIFY(privateState.isValid());
+            QVERIFY(library.isValid());
+            QVERIFY(writeLibrary(library.path()));
+            ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+            ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+            const bool journalOperation =
+                operation == PersistenceIoOperation::WriteJournalStage ||
+                operation == PersistenceIoOperation::FlushJournalStage ||
+                operation == PersistenceIoOperation::RenameJournal ||
+                operation == PersistenceIoOperation::FlushJournalDirectory;
+            int matchingOperations = 0;
+            const PersistenceIoFailureHook failRequestedOperation =
+                [operation, journalOperation, &matchingOperations](
+                    PersistenceIoOperation current, QString *error) {
+                    if (current != operation) {
+                        return false;
+                    }
+                    ++matchingOperations;
+                    if (journalOperation && matchingOperations == 1) {
+                        return false;
+                    }
+                    *error = QStringLiteral("Injected system I/O failure.");
+                    return true;
+                };
+            const PersistenceResult failed = LibraryPersistence::saveFile(
+                library.path(), chapterRelativePath, sha256(oldChapter), newChapter,
+                {}, failRequestedOperation);
+            QVERIFY2(!failed.ok, qPrintable(ioOperationArgument(operation)));
+
+            QByteArray preRecoveryBytes;
+            QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &preRecoveryBytes));
+            QVERIFY(preRecoveryBytes == oldChapter || preRecoveryBytes == newChapter);
+
+            LibraryWindow window;
+            QVERIFY2(window.openLibrary(library.path()), qPrintable(ioOperationArgument(operation)));
+            QByteArray recoveredBytes;
+            QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &recoveredBytes));
+            QCOMPARE(recoveredBytes, newChapter);
+            window.show();
+            QApplication::processEvents();
+            auto *notice = window.findChild<QLabel *>("library-recovery-notice");
+            QVERIFY(notice);
+            QVERIFY2(notice->isVisible(), qPrintable(ioOperationArgument(operation)));
+        }
+    }
+
+    void preparedJournalIoFailuresKeepOldBytesOrRecoverVisibly()
+    {
+        const QList<PersistenceIoOperation> journalOperations{
+            PersistenceIoOperation::WriteJournalStage,
+            PersistenceIoOperation::FlushJournalStage,
+            PersistenceIoOperation::RenameJournal,
+            PersistenceIoOperation::FlushJournalDirectory};
+        for (const PersistenceIoOperation operation : journalOperations) {
+            QTemporaryDir privateData;
+            QTemporaryDir privateState;
+            QTemporaryDir library;
+            QVERIFY(privateData.isValid());
+            QVERIFY(privateState.isValid());
+            QVERIFY(library.isValid());
+            QVERIFY(writeLibrary(library.path()));
+            ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+            ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+            const PersistenceIoFailureHook failRequestedOperation =
+                [operation](PersistenceIoOperation current, QString *error) {
+                    if (current != operation) {
+                        return false;
+                    }
+                    *error = QStringLiteral("Injected prepared-journal I/O failure.");
+                    return true;
+                };
+            const PersistenceResult failed = LibraryPersistence::saveFile(
+                library.path(), chapterRelativePath, sha256(oldChapter), newChapter,
+                {}, failRequestedOperation);
+            QVERIFY2(!failed.ok, qPrintable(ioOperationArgument(operation)));
+
+            QByteArray bytes;
+            const QString chapterPath = QDir(library.path()).filePath(chapterRelativePath);
+            QVERIFY(readFile(chapterPath, &bytes));
+            QCOMPARE(bytes, oldChapter);
+
+            LibraryWindow window;
+            QVERIFY2(window.openLibrary(library.path()), qPrintable(ioOperationArgument(operation)));
+            const QByteArray expectedBytes = operation ==
+                    PersistenceIoOperation::FlushJournalDirectory
+                ? newChapter
+                : oldChapter;
+            QVERIFY(readFile(chapterPath, &bytes));
+            QCOMPARE(bytes, expectedBytes);
+            window.show();
+            QApplication::processEvents();
+            auto *notice = window.findChild<QLabel *>("library-recovery-notice");
+            QCOMPARE(notice && notice->isVisible(), expectedBytes == newChapter);
+        }
+    }
+
+    void recoveryIoFailuresPauseAndCanRetry()
+    {
+        const QList<PersistenceIoOperation> recoveryOperations{
+            PersistenceIoOperation::ReadJournal,
+            PersistenceIoOperation::ReadTarget,
+            PersistenceIoOperation::WriteTargetStage,
+            PersistenceIoOperation::FlushTargetStage,
+            PersistenceIoOperation::RenameTarget,
+            PersistenceIoOperation::FlushTargetDirectory};
+        for (const PersistenceIoOperation operation : recoveryOperations) {
+            QTemporaryDir privateData;
+            QTemporaryDir privateState;
+            QTemporaryDir library;
+            QVERIFY(privateData.isValid());
+            QVERIFY(privateState.isValid());
+            QVERIFY(library.isValid());
+            QVERIFY(writeLibrary(library.path()));
+            ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+            ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+            const PersistenceCheckpointHook stopBeforeRename = [](
+                PersistenceCheckpoint checkpoint, QString *) {
+                return checkpoint != PersistenceCheckpoint::BeforeTargetRename;
+            };
+            const PersistenceResult interrupted = LibraryPersistence::saveFile(
+                library.path(), chapterRelativePath, sha256(oldChapter), newChapter,
+                stopBeforeRename);
+            QVERIFY(!interrupted.ok);
+
+            const PersistenceIoFailureHook failRequestedOperation =
+                [operation](PersistenceIoOperation current, QString *error) {
+                    if (current != operation) {
+                        return false;
+                    }
+                    *error = QStringLiteral("Injected recovery I/O failure.");
+                    return true;
+                };
+            const PersistenceResult paused = LibraryPersistence::recoverPendingSaves(
+                library.path(), failRequestedOperation);
+            QVERIFY2(!paused.ok, qPrintable(ioOperationArgument(operation)));
+
+            LibraryWindow window;
+            QVERIFY2(window.openLibrary(library.path()), qPrintable(ioOperationArgument(operation)));
+            QByteArray recoveredBytes;
+            QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &recoveredBytes));
+            QCOMPARE(recoveredBytes, newChapter);
+            window.show();
+            QApplication::processEvents();
+            auto *notice = window.findChild<QLabel *>("library-recovery-notice");
+            QVERIFY(notice);
+            QVERIFY2(notice->isVisible(), qPrintable(ioOperationArgument(operation)));
         }
     }
 

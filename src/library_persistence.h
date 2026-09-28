@@ -18,8 +18,24 @@ enum class PersistenceCheckpoint {
     AfterJournalCompletion
 };
 
+enum class PersistenceIoOperation {
+    ReadTarget,
+    WriteTargetStage,
+    FlushTargetStage,
+    RenameTarget,
+    FlushTargetDirectory,
+    ReadJournal,
+    WriteJournalStage,
+    FlushJournalStage,
+    RenameJournal,
+    FlushJournalDirectory
+};
+
 using PersistenceCheckpointHook =
     std::function<bool(PersistenceCheckpoint, QString *)>;
+// Return true to make the selected target I/O operation fail.
+using PersistenceIoFailureHook =
+    std::function<bool(PersistenceIoOperation, QString *)>;
 
 struct PersistenceResult {
     bool ok = false;
@@ -36,10 +52,13 @@ public:
                                 const QString &relativePath,
                                 QByteArray *bytes,
                                 QString *error);
-    static PersistenceResult recoverPendingSaves(const QString &libraryPath);
+    static PersistenceResult recoverPendingSaves(
+        const QString &libraryPath,
+        const PersistenceIoFailureHook &ioFailure = {});
     static PersistenceResult saveFile(const QString &libraryPath,
                                       const QString &relativePath,
                                       const QByteArray &expectedHash,
                                       const QByteArray &newBytes,
-                                      const PersistenceCheckpointHook &checkpoint = {});
+                                      const PersistenceCheckpointHook &checkpoint = {},
+                                      const PersistenceIoFailureHook &ioFailure = {});
 };
