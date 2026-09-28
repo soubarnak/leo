@@ -21,6 +21,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Trust checkout in package container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Compare package versions
         id: versions
         run: |
