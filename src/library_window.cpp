@@ -32,6 +32,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -60,8 +61,13 @@ constexpr int ChapterItemKind = 1;
 QString deviceHandoffGuidance()
 {
     return QStringLiteral(
-        "Device handoff: close the book on one device and let synchronization finish before editing on another. "
-        "LEO cannot detect every legacy write race or prevent sync software from exposing an intermediate multi-file save.");
+        "After LEO closes, wait for Syncthing to report Up to Date before opening this Library "
+        "in NEO desktop or Pocket. "
+        "Simultaneous editing is unsupported. If LEO detects a competing edit, it pauses shared saves, "
+        "preserves your draft, and keeps the other version in the shared Library. If LEO verifies "
+        "a separate Recovered Library, use Switch to Recovered Library to inspect your draft. "
+        "LEO cannot detect every legacy write race or prevent sync software from exposing an "
+        "intermediate multi-file save.");
 }
 
 struct ClipboardProvenance {
@@ -767,6 +773,42 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     QAction *openAction = fileMenu->addAction(QStringLiteral("&Open Library…"));
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &LibraryWindow::chooseLibrary);
+    fileMenu->addSeparator();
+    QAction *handoffAction = fileMenu->addAction(
+        QStringLiteral("Prepare Device Handoff…"));
+    connect(handoffAction, &QAction::triggered, this, [this] {
+        if (!savePendingEdits()) {
+            QMessageBox::warning(
+                this, QStringLiteral("Device handoff is not ready"),
+                QStringLiteral("LEO could not finish saving this chapter. Keep LEO open and "
+                               "resolve the save problem before handoff.\n\n%1")
+                    .arg(deviceHandoffGuidance()));
+            return;
+        }
+
+        QString saveStatus = QStringLiteral("LEO finished pending chapter saves.");
+        if (chapterConflict_) {
+            saveStatus = QStringLiteral(
+                "LEO saved your draft outside the shared Library. The shared Library remains "
+                "unchanged. %1")
+                .arg(recoveredLibraryPath_.isEmpty()
+                         ? QStringLiteral("No verified Recovered Library is available.")
+                         : QStringLiteral("A separate Recovered Library is ready for inspection."));
+        }
+        saveStatus += QStringLiteral("\n\n");
+        QMessageBox handoffDialog(this);
+        handoffDialog.setIcon(QMessageBox::Information);
+        handoffDialog.setWindowTitle(QStringLiteral("Device handoff"));
+        handoffDialog.setText(saveStatus + deviceHandoffGuidance());
+        QPushButton *closeButton = handoffDialog.addButton(
+            QStringLiteral("Close LEO"), QMessageBox::AcceptRole);
+        handoffDialog.addButton(QStringLiteral("Keep LEO Open"), QMessageBox::RejectRole);
+        handoffDialog.setDefaultButton(closeButton);
+        handoffDialog.exec();
+        if (handoffDialog.clickedButton() == closeButton) {
+            close();
+        }
+    });
     fileMenu->addSeparator();
     QAction *quitAction = fileMenu->addAction(QStringLiteral("E&xit"));
     quitAction->setShortcut(QKeySequence::Quit);
