@@ -1,0 +1,5 @@
+leo-writer (0.1.0) unstable; urgency=medium
+
+  * Add native Qt Library browser and Debian package.
+
+ -- LEO maintainers <leo-writer@users.noreply.github.com>  Mon, 28 Sep 2026 12:00:00 +0530

@@ -1,0 +1,9 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: leo-writer
+Source: https://github.com/soubarnak/leo
+
+Files: *
+Copyright: 2026 LEO maintainers
+License: MIT
+ This package is distributed under the MIT License.
+ See the /usr/share/common-licenses/MIT file for the full license text.

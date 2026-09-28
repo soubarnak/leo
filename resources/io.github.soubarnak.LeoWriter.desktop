@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=LEO
+GenericName=Novel Writer
+Comment=Browse an existing NEO Library
+Exec=leo-writer
+Icon=io.github.soubarnak.LeoWriter
+Terminal=false
+Categories=Office;WordProcessor;
+Keywords=writing;novel;book;library;
+StartupWMClass=io.github.soubarnak.LeoWriter

@@ -1,0 +1,5 @@
+add_executable(leo-library-browser-test library_browser_test.cpp)
+target_link_libraries(leo-library-browser-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-library-browser COMMAND leo-library-browser-test)
+set_tests_properties(leo-library-browser PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+add_test(NAME leo-writer-version COMMAND $<TARGET_FILE:leo-writer> --version)

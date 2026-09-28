@@ -1,0 +1,16 @@
+Source: leo-writer
+Section: utils
+Priority: optional
+Maintainer: LEO maintainers <leo-writer@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), cmake, g++, qt6-base-dev
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/soubarnak/leo
+
+Package: leo-writer
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, qt6-qpa-plugins
+Description: native desktop library browser for LEO
+ LEO opens existing NEO Libraries in a native Qt desktop window.
+ This initial package provides read-only browsing of authors, shelves,
+ books, and chapter order.
