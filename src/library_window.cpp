@@ -119,8 +119,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             return;
         }
         chapterDirty_ = true;
-        saveFailed_ = false;
-        updateEditorState(QStringLiteral("Unsaved changes. LEO will save shortly."));
+        updateEditorState();
         saveTimer_->start();
     });
 
@@ -190,19 +189,6 @@ QString LibraryWindow::selectLibraryDirectory(QWidget *parent, const QString &st
 bool LibraryWindow::openLibrary(const QString &path)
 {
     if (!savePendingEdits()) {
-        return false;
-    }
-
-    const PersistenceResult recovery = LibraryPersistence::recoverLibrary(path);
-    if (!recovery.ok) {
-        tree_->clear();
-        activeLibraryPath_.clear();
-        refusal_->setText(QStringLiteral(
-            "LEO paused Library opening during save recovery.\n\n%1\n\n"
-            "The current Library file was left untouched.")
-                              .arg(recovery.error));
-        pages_->setCurrentWidget(refusalPage_);
-        statusBar()->showMessage(QStringLiteral("Library recovery needs attention"));
         return false;
     }
 
@@ -290,7 +276,7 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
                                   .arg(document.refusalReason));
     } else {
         editorState_->setText(QStringLiteral(
-            "Plain prose is editable. Other markup opens as read-only source text."));
+            "Plain prose is editable. Changes save after a short pause."));
     }
     saveButton_->setText(QStringLiteral("Save"));
     saveButton_->setEnabled(false);
@@ -338,8 +324,7 @@ bool LibraryWindow::saveCurrentChapter()
     sourceHash_ = result.savedHash;
     chapterDirty_ = false;
     saveFailed_ = false;
-    updateEditorState(QStringLiteral("Saved. Library remains compatible with NEO."));
-    statusBar()->showMessage(QStringLiteral("Chapter saved safely"));
+    updateEditorState(QStringLiteral("Plain prose is editable. Changes save after a short pause."));
     return true;
 }
 
@@ -361,7 +346,11 @@ void LibraryWindow::updateEditorState(const QString &message)
     }
     saveButton_->setEnabled(chapterDirty_ && !chapterReadOnly_);
     saveButton_->setText(saveFailed_ ? QStringLiteral("Retry Save") : QStringLiteral("Save"));
-    setWindowTitle(chapterDirty_ ? QStringLiteral("LEO — unsaved chapter") : QStringLiteral("LEO"));
+    if (!chapterDirty_) {
+        setWindowTitle(QStringLiteral("LEO"));
+    } else if (saveFailed_) {
+        setWindowTitle(QStringLiteral("LEO — unsaved chapter"));
+    }
 }
 
 void LibraryWindow::closeEvent(QCloseEvent *event)
