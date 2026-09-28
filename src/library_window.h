@@ -34,6 +34,7 @@ private:
     void closeEvent(QCloseEvent *event) override;
 
     QStackedWidget *pages_ = nullptr;
+    QLabel *recoveryNotice_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     QWidget *editorPage_ = nullptr;
     QLabel *editorTitle_ = nullptr;

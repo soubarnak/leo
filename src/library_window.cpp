@@ -632,7 +632,16 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     resize(960, 700);
     defaultPath_ = defaultLibraryPath();
 
-    pages_ = new QStackedWidget(this);
+    auto *centralPage = new QWidget(this);
+    auto *centralLayout = new QVBoxLayout(centralPage);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+    recoveryNotice_ = new QLabel(centralPage);
+    recoveryNotice_->setObjectName(QStringLiteral("library-recovery-notice"));
+    recoveryNotice_->setWordWrap(true);
+    recoveryNotice_->hide();
+    centralLayout->addWidget(recoveryNotice_);
+    pages_ = new QStackedWidget(centralPage);
+    centralLayout->addWidget(pages_, 1);
     tree_ = new QTreeWidget(pages_);
     tree_->setObjectName(QStringLiteral("library-tree"));
     tree_->setAccessibleName(QStringLiteral("Library shelves, books, and chapters"));
@@ -730,7 +739,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     pages_->addWidget(tree_);
     pages_->addWidget(editorPage_);
     pages_->addWidget(refusalPage_);
-    setCentralWidget(pages_);
+    setCentralWidget(centralPage);
     statusBar()->showMessage(QStringLiteral("No Library open"));
 
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
@@ -783,17 +792,39 @@ bool LibraryWindow::openLibrary(const QString &path)
         return false;
     }
 
-    const LibraryReadResult result = LibraryReader::read(path);
+    const PersistenceResult recovery = LibraryPersistence::recoverPendingSaves(path);
+    recoveryNotice_->hide();
     tree_->clear();
+    if (!recovery.ok) {
+        qWarning().noquote() << "Library save recovery paused:" << recovery.error;
+        activeLibraryPath_.clear();
+        const QString recoveredMessage = recovery.recovered
+            ? QStringLiteral("LEO recovered an earlier interrupted save, then paused this Library.")
+            : QStringLiteral("LEO paused this Library while recovering an interrupted save.");
+        refusal_->setText(QStringLiteral(
+            "%1\n\n%2\n\nThe unresolved save journal and unexpected Library bytes remain available for inspection.")
+                              .arg(recoveredMessage, recovery.error));
+        pages_->setCurrentWidget(refusalPage_);
+        statusBar()->showMessage(QStringLiteral("Library save recovery paused for inspection"));
+        return false;
+    }
+
+    const LibraryReadResult result = LibraryReader::read(path);
     if (!result.ok()) {
         qWarning().noquote() << "Library open refused:" << result.error;
         activeLibraryPath_.clear();
         refusal_->setText(QStringLiteral(
-            "LEO refused to open this Library.\n\n%1\n\nNo Library files were changed.")
+            "LEO refused to open this Library.\n\n%1")
                               .arg(result.error));
         pages_->setCurrentWidget(refusalPage_);
         statusBar()->showMessage(QStringLiteral("No Library open"));
         return false;
+    }
+
+    if (recovery.recovered) {
+        recoveryNotice_->setText(QStringLiteral(
+            "LEO recovered an interrupted save. Review the recovered chapter before continuing."));
+        recoveryNotice_->show();
     }
 
     activeLibraryPath_ = result.library.path;
@@ -816,7 +847,9 @@ bool LibraryWindow::openLibrary(const QString &path)
 
     tree_->expandAll();
     pages_->setCurrentWidget(tree_);
-    statusBar()->showMessage(QStringLiteral("Library open: %1").arg(result.library.path));
+    statusBar()->showMessage(recovery.recovered
+                                 ? QStringLiteral("Interrupted save recovered; review chapter")
+                                 : QStringLiteral("Library open: %1").arg(result.library.path));
     return true;
 }
 

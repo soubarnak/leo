@@ -2,6 +2,12 @@ add_executable(leo-library-browser-test library_browser_test.cpp)
 target_link_libraries(leo-library-browser-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-library-browser COMMAND leo-library-browser-test)
 set_tests_properties(leo-library-browser PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(leo-library-persistence-test library_persistence_test.cpp)
+target_link_libraries(leo-library-persistence-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-library-persistence COMMAND leo-library-persistence-test)
+set_tests_properties(leo-library-persistence PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_test(NAME leo-writer-version COMMAND $<TARGET_FILE:leo-writer> --version)
 add_test(NAME leo-writer-package-identity
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/package_identity_test.sh

@@ -7,6 +7,8 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMap>
 #include <QPlainTextEdit>
@@ -142,6 +144,32 @@ QTemporaryDir makeSingleChapterLibrary(const QByteArray &chapter,
     writeFile(QDir(bookPath).filePath("unknown-supporting-data.bin"),
               QByteArray("\0future\xff", 8));
     return temporary;
+}
+
+void writePreparedJournal(const QString &stateHome,
+                          const QString &libraryPath,
+                          const QString &relativePath,
+                          const QByteArray &oldBytes,
+                          const QByteArray &newBytes)
+{
+    const QString directory = QDir(stateHome).filePath("leo-writer/save-journal");
+    if (!QDir().mkpath(directory)) {
+        qFatal("Could not create test save journal directory");
+    }
+    const QString id = QStringLiteral("11111111-1111-4111-8111-111111111111");
+    const QJsonObject journal{
+        {QStringLiteral("id"), id},
+        {QStringLiteral("library_path"), QDir(libraryPath).canonicalPath()},
+        {QStringLiteral("relative_path"), relativePath},
+        {QStringLiteral("old_bytes"), QString::fromLatin1(oldBytes.toBase64())},
+        {QStringLiteral("new_bytes"), QString::fromLatin1(newBytes.toBase64())},
+        {QStringLiteral("old_sha256"), QString::fromLatin1(
+             QCryptographicHash::hash(oldBytes, QCryptographicHash::Sha256).toHex())},
+        {QStringLiteral("new_sha256"), QString::fromLatin1(
+             QCryptographicHash::hash(newBytes, QCryptographicHash::Sha256).toHex())},
+        {QStringLiteral("state"), QStringLiteral("prepared")}};
+    writeFile(QDir(directory).filePath(id + QStringLiteral(".json")),
+              QJsonDocument(journal).toJson(QJsonDocument::Compact));
 }
 
 class ScopedEnvironmentVariable final {
@@ -669,6 +697,101 @@ private slots:
             QApplication::processEvents();
             QCOMPARE(libraryFileHashes(library.path()), originalHashes);
         }
+    }
+
+    void recoversInterruptedSaveBeforeOpeningLibrary()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray oldBytes("<p>Saved paragraph.</p>");
+        const QByteArray newBytes("<p>Recovered paragraph.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(oldBytes);
+        QVERIFY(library.isValid());
+        const QString relativePath = QStringLiteral("book-1/chapters/chapter-a.html");
+        writePreparedJournal(privateState.path(), library.path(), relativePath,
+                             oldBytes, newBytes);
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        QFile chapter(QDir(library.path()).filePath(relativePath));
+        QVERIFY(chapter.open(QIODevice::ReadOnly));
+        QCOMPARE(chapter.readAll(), newBytes);
+
+        auto *notice = window.findChild<QLabel *>("library-recovery-notice");
+        QVERIFY(notice);
+        window.show();
+        QApplication::processEvents();
+        QVERIFY(notice->isVisible());
+        QVERIFY(notice->text().contains(QStringLiteral("interrupted save"), Qt::CaseInsensitive));
+    }
+
+    void pausesRecoveryWhenLibraryBytesMatchNeitherJournalHash()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray oldBytes("<p>Saved paragraph.</p>");
+        const QByteArray newBytes("<p>Recovered paragraph.</p>");
+        const QByteArray externalBytes("<p>External revision.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(externalBytes);
+        QVERIFY(library.isValid());
+        const QString relativePath = QStringLiteral("book-1/chapters/chapter-a.html");
+        writePreparedJournal(privateState.path(), library.path(), relativePath,
+                             oldBytes, newBytes);
+
+        LibraryWindow window;
+        QVERIFY(!window.openLibrary(library.path()));
+        QFile chapter(QDir(library.path()).filePath(relativePath));
+        QVERIFY(chapter.open(QIODevice::ReadOnly));
+        QCOMPARE(chapter.readAll(), externalBytes);
+
+        const QString journalPath = QDir(privateState.path()).filePath(
+            QStringLiteral("leo-writer/save-journal/11111111-1111-4111-8111-111111111111.json"));
+        QVERIFY(QFileInfo::exists(journalPath));
+        auto *refusal = window.findChild<QLabel *>("library-refusal");
+        QVERIFY(refusal);
+        window.show();
+        QApplication::processEvents();
+        QVERIFY(refusal->isVisible());
+        QVERIFY(refusal->text().contains(QStringLiteral("paused"), Qt::CaseInsensitive));
+        QVERIFY(refusal->text().contains(QStringLiteral("external change"), Qt::CaseInsensitive));
+    }
+
+    void recoversInterruptedSaveWhenFlushedStageRemains()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray oldBytes("<p>Saved paragraph.</p>");
+        const QByteArray newBytes("<p>Recovered paragraph.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(oldBytes);
+        QVERIFY(library.isValid());
+        const QString relativePath = QStringLiteral("book-1/chapters/chapter-a.html");
+        const QString stagePath = QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/.chapter-a.html.leo-11111111-1111-4111-8111-111111111111.tmp"));
+        writePreparedJournal(privateState.path(), library.path(), relativePath,
+                             oldBytes, newBytes);
+        writeFile(stagePath, newBytes);
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        QFile chapter(QDir(library.path()).filePath(relativePath));
+        QVERIFY(chapter.open(QIODevice::ReadOnly));
+        QCOMPARE(chapter.readAll(), newBytes);
+        QVERIFY(!QFileInfo::exists(stagePath));
     }
 };
 

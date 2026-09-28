@@ -146,6 +146,45 @@ bool syncDirectory(const QString &path, QString *error)
     return true;
 }
 
+QString checkpointName(PersistenceCheckpoint checkpoint)
+{
+    switch (checkpoint) {
+    case PersistenceCheckpoint::BeforeTargetStaging:
+        return QStringLiteral("before target staging");
+    case PersistenceCheckpoint::AfterTargetStaging:
+        return QStringLiteral("after target staging");
+    case PersistenceCheckpoint::BeforeTargetFlush:
+        return QStringLiteral("before target flush");
+    case PersistenceCheckpoint::AfterTargetFlush:
+        return QStringLiteral("after target flush");
+    case PersistenceCheckpoint::BeforeTargetRename:
+        return QStringLiteral("before target rename");
+    case PersistenceCheckpoint::AfterTargetRename:
+        return QStringLiteral("after target rename");
+    case PersistenceCheckpoint::BeforeTargetDirectoryFlush:
+        return QStringLiteral("before target directory flush");
+    case PersistenceCheckpoint::AfterTargetDirectoryFlush:
+        return QStringLiteral("after target directory flush");
+    case PersistenceCheckpoint::BeforeJournalCompletion:
+        return QStringLiteral("before journal completion");
+    case PersistenceCheckpoint::AfterJournalCompletion:
+        return QStringLiteral("after journal completion");
+    }
+    return QStringLiteral("unknown save checkpoint");
+}
+
+bool runCheckpoint(const PersistenceCheckpointHook &hook,
+                   PersistenceCheckpoint checkpoint, QString *error)
+{
+    if (!hook || hook(checkpoint, error)) {
+        return true;
+    }
+    if (error->isEmpty()) {
+        *error = QStringLiteral("Save interrupted %1.").arg(checkpointName(checkpoint));
+    }
+    return false;
+}
+
 bool writeAll(int descriptor, const char *data, qsizetype size, QString *error,
               const QString &path)
 {
@@ -167,7 +206,7 @@ bool writeAll(int descriptor, const char *data, qsizetype size, QString *error,
 }
 
 bool writeStageFile(const QString &path, const QByteArray &bytes, mode_t mode,
-                    QString *error)
+                    const PersistenceCheckpointHook &checkpoint, QString *error)
 {
     const QByteArray nativePath = QFile::encodeName(path);
     const int descriptor = ::open(nativePath.constData(),
@@ -185,9 +224,18 @@ bool writeStageFile(const QString &path, const QByteArray &bytes, mode_t mode,
     if (ok) {
         ok = writeAll(descriptor, bytes.constData(), bytes.size(), error, path);
     }
+    if (ok) {
+        ok = runCheckpoint(checkpoint, PersistenceCheckpoint::AfterTargetStaging, error);
+    }
+    if (ok) {
+        ok = runCheckpoint(checkpoint, PersistenceCheckpoint::BeforeTargetFlush, error);
+    }
     if (ok && ::fsync(descriptor) != 0) {
         *error = systemError(QStringLiteral("Cannot flush staged file"), path);
         ok = false;
+    }
+    if (ok) {
+        ok = runCheckpoint(checkpoint, PersistenceCheckpoint::AfterTargetFlush, error);
     }
     const int closeResult = ::close(descriptor);
     if (ok && closeResult != 0) {
@@ -200,25 +248,106 @@ bool writeStageFile(const QString &path, const QByteArray &bytes, mode_t mode,
     return ok;
 }
 
+QString stagePathFor(const QString &path, const QString &operationId)
+{
+    const QFileInfo targetInfo(path);
+    return QDir(targetInfo.absolutePath()).filePath(
+        QStringLiteral(".%1.leo-%2.tmp").arg(targetInfo.fileName(), operationId));
+}
+
+bool removeInterruptedStage(const QString &target, const QString &operationId,
+                            const QByteArray &expectedBytes, QString *error)
+{
+    const QString stagePath = stagePathFor(target, operationId);
+    const QFileInfo stageInfo(stagePath);
+    if (!stageInfo.exists() && !stageInfo.isSymLink()) {
+        return true;
+    }
+    if (!stageInfo.isFile() || stageInfo.isSymLink()) {
+        *error = QStringLiteral(
+            "Save recovery found an unsafe staged file in %1. It was left untouched.")
+                     .arg(stagePath);
+        return false;
+    }
+
+    QFile stageFile(stagePath);
+    if (!stageFile.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("Cannot read interrupted stage %1: %2")
+                     .arg(stagePath, stageFile.errorString());
+        return false;
+    }
+    const QByteArray stagedBytes = stageFile.readAll();
+    if (stageFile.error() != QFileDevice::NoError) {
+        *error = QStringLiteral("Cannot read interrupted stage %1: %2")
+                     .arg(stagePath, stageFile.errorString());
+        return false;
+    }
+    if (stagedBytes != expectedBytes) {
+        *error = QStringLiteral(
+            "Save recovery found unexpected staged bytes in %1. They were left untouched.")
+                     .arg(stagePath);
+        return false;
+    }
+    if (::unlink(QFile::encodeName(stagePath).constData()) != 0) {
+        *error = systemError(QStringLiteral("Cannot remove interrupted stage"), stagePath);
+        return false;
+    }
+    return syncDirectory(QFileInfo(stagePath).absolutePath(), error);
+}
+
+bool fileHash(const QString &path, QByteArray *contents, QByteArray *digest,
+              QString *error);
+
 bool atomicReplace(const QString &path, const QByteArray &bytes, mode_t mode,
-                   const QString &operationId, QString *error)
+                   const QString &operationId, QString *error,
+                   const PersistenceCheckpointHook &checkpoint = {},
+                   const QByteArray &expectedCurrentHash = {}, bool *conflict = nullptr)
 {
     const QFileInfo targetInfo(path);
     const QString parent = targetInfo.absolutePath();
-    const QString stagePath = QDir(parent).filePath(
-        QStringLiteral(".%1.leo-%2.tmp").arg(targetInfo.fileName(), operationId));
-    if (!writeStageFile(stagePath, bytes, mode, error)) {
+    const QString stagePath = stagePathFor(path, operationId);
+    if (!removeInterruptedStage(path, operationId, bytes, error)) {
+        return false;
+    }
+    if (!runCheckpoint(checkpoint, PersistenceCheckpoint::BeforeTargetStaging, error) ||
+        !writeStageFile(stagePath, bytes, mode, checkpoint, error)) {
         return false;
     }
 
     const QByteArray nativeStage = QFile::encodeName(stagePath);
     const QByteArray nativeTarget = QFile::encodeName(path);
+    if (!runCheckpoint(checkpoint, PersistenceCheckpoint::BeforeTargetRename, error)) {
+        ::unlink(nativeStage.constData());
+        return false;
+    }
+    if (!expectedCurrentHash.isEmpty()) {
+        QByteArray currentBytes;
+        QByteArray currentHash;
+        if (!fileHash(path, &currentBytes, &currentHash, error)) {
+            ::unlink(nativeStage.constData());
+            return false;
+        }
+        if (currentHash != expectedCurrentHash) {
+            *error = QStringLiteral(
+                "This chapter changed before atomic replacement. The current file was left untouched.");
+            if (conflict) {
+                *conflict = true;
+            }
+            ::unlink(nativeStage.constData());
+            return false;
+        }
+    }
     if (::rename(nativeStage.constData(), nativeTarget.constData()) != 0) {
         *error = systemError(QStringLiteral("Cannot atomically replace file"), path);
         ::unlink(nativeStage.constData());
         return false;
     }
-    return syncDirectory(parent, error);
+    if (!runCheckpoint(checkpoint, PersistenceCheckpoint::AfterTargetRename, error) ||
+        !runCheckpoint(checkpoint, PersistenceCheckpoint::BeforeTargetDirectoryFlush, error) ||
+        !syncDirectory(parent, error)) {
+        return false;
+    }
+    return runCheckpoint(checkpoint, PersistenceCheckpoint::AfterTargetDirectoryFlush, error);
 }
 
 bool modeForFile(const QString &path, mode_t *mode, QString *error)
@@ -421,12 +550,18 @@ bool parseJournal(const QString &path, Journal *journal, QString *error)
 }
 
 bool finishJournal(const QString &directory, const QString &journalPath, Journal *journal,
-                   QString *error)
+                   QString *error, const PersistenceCheckpointHook &checkpoint = {})
 {
     if (journal->state != QStringLiteral("complete")) {
+        if (!runCheckpoint(checkpoint, PersistenceCheckpoint::BeforeJournalCompletion, error)) {
+            return false;
+        }
         journal->state = QStringLiteral("complete");
         QString ignoredPath;
         if (!writeJournal(directory, *journal, &ignoredPath, error)) {
+            return false;
+        }
+        if (!runCheckpoint(checkpoint, PersistenceCheckpoint::AfterJournalCompletion, error)) {
             return false;
         }
     }
@@ -435,7 +570,10 @@ bool finishJournal(const QString &directory, const QString &journalPath, Journal
     if (::unlink(nativePath.constData()) != 0 && errno != ENOENT) {
         return true;
     }
-    return syncDirectory(directory, error);
+    QString cleanupError;
+    // Durable completion already committed the save; journal cleanup cannot revoke it.
+    syncDirectory(directory, &cleanupError);
+    return true;
 }
 
 bool fileHash(const QString &path, QByteArray *contents, QByteArray *digest,
@@ -466,20 +604,30 @@ PersistenceResult recoverOne(const QString &directory, const QString &journalPat
     }
     const QByteArray oldHash = LibraryPersistence::hash(journal.oldBytes);
     const QByteArray newHash = LibraryPersistence::hash(journal.newBytes);
-    if (currentHash == oldHash) {
-        mode_t mode = 0;
-        if (!modeForFile(target, &mode, &result.error)) {
-            return result;
-        }
-        if (!atomicReplace(target, journal.newBytes, mode, journal.id, &result.error)) {
-            return result;
-        }
-    } else if (currentHash != newHash) {
+    if (currentHash != oldHash && currentHash != newHash) {
         result.conflict = true;
         result.error = QStringLiteral(
             "Save recovery found an external change in %1. The Library file was left untouched.")
                            .arg(journal.relativePath);
         return result;
+    }
+
+    if (!removeInterruptedStage(target, journal.id, journal.newBytes, &result.error)) {
+        result.conflict = true;
+        return result;
+    }
+
+    if (currentHash == oldHash) {
+        mode_t mode = 0;
+        if (!modeForFile(target, &mode, &result.error)) {
+            return result;
+        }
+        bool targetConflict = false;
+        if (!atomicReplace(target, journal.newBytes, mode, journal.id, &result.error,
+                           {}, oldHash, &targetConflict)) {
+            result.conflict = targetConflict;
+            return result;
+        }
     }
 
     if (!syncDirectory(QFileInfo(target).absolutePath(), &result.error)) {
@@ -489,6 +637,7 @@ PersistenceResult recoverOne(const QString &directory, const QString &journalPat
         return result;
     }
     result.ok = true;
+    result.recovered = true;
     result.savedHash = newHash;
     return result;
 }
@@ -843,30 +992,38 @@ PersistenceResult LibraryPersistence::recoverPendingSaves(const QString &library
     }
     const QFileInfoList journals = QDir(directory).entryInfoList(
         {QStringLiteral("*.json")}, QDir::Files | QDir::NoSymLinks, QDir::Name);
+    bool recovered = false;
     for (const QFileInfo &entry : journals) {
         Journal journal;
         QString error;
         if (!parseJournal(entry.filePath(), &journal, &error)) {
-            return failed(error);
+            PersistenceResult failure = failed(error);
+            failure.recovered = recovered;
+            return failure;
         }
         if (canonicalDirectory(journal.libraryPath) != libraryRoot) {
             continue;
         }
         const PersistenceResult result = recoverOne(directory, entry.filePath(), journal);
         if (!result.ok) {
-            return result;
+            PersistenceResult failure = result;
+            failure.recovered = recovered || result.recovered;
+            return failure;
         }
+        recovered = recovered || result.recovered;
     }
 
     PersistenceResult result;
     result.ok = true;
+    result.recovered = recovered;
     return result;
 }
 
 PersistenceResult LibraryPersistence::saveFile(const QString &libraryPath,
                                                 const QString &relativePath,
                                                 const QByteArray &expectedHash,
-                                                const QByteArray &newBytes)
+                                                const QByteArray &newBytes,
+                                                const PersistenceCheckpointHook &checkpoint)
 {
     const QString libraryRoot = canonicalDirectory(libraryPath);
     const PersistenceResult recovery = recoverPendingSaves(libraryRoot);
@@ -889,6 +1046,7 @@ PersistenceResult LibraryPersistence::saveFile(const QString &libraryPath,
     if (currentHash == newHash) {
         PersistenceResult result;
         result.ok = true;
+        result.recovered = recovery.recovered;
         result.savedHash = currentHash;
         return result;
     }
@@ -940,15 +1098,20 @@ PersistenceResult LibraryPersistence::saveFile(const QString &libraryPath,
     if (!modeForFile(target, &mode, &error)) {
         return failed(error);
     }
-    if (!atomicReplace(target, newBytes, mode, journal.id, &error)) {
-        return failed(error);
+    bool targetConflict = false;
+    if (!atomicReplace(target, newBytes, mode, journal.id, &error,
+                       checkpoint, expectedHash, &targetConflict)) {
+        return failed(error, targetConflict);
     }
-    if (!finishJournal(privateJournalDirectory, journalPath, &journal, &error)) {
-        return failed(error);
+    if (!finishJournal(privateJournalDirectory, journalPath, &journal, &error, checkpoint)) {
+        PersistenceResult result = failed(error);
+        result.recovered = recovery.recovered;
+        return result;
     }
 
     PersistenceResult result;
     result.ok = true;
+    result.recovered = recovery.recovered;
     result.savedHash = newHash;
     return result;
 }
