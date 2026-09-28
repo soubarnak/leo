@@ -119,6 +119,10 @@ function step(state, action) {
   } else if (action === 'outside') {
     next.working = next.working.replace('Before', 'Revised before');
     next.message = 'Prose outside special content changed. Original source remains unchanged.';
+  } else if (action === 'copy') {
+    next.working += scenarios[state.scenario].html;
+    next.lost = true;
+    next.message = 'Special content duplicated without an ownership rule. IDs or metadata may now conflict.';
   } else {
     next.working = '<p>Replaced passage.</p>';
     next.lost = true;
