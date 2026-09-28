@@ -1,4 +1,5 @@
 #include "library_persistence.h"
+#include "library_reader.h"
 #include "library_window.h"
 
 #include <QApplication>
@@ -288,6 +289,9 @@ private slots:
         ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
 
         const QByteArray externalBytes("<p>External revision.</p>");
+        const QByteArray externalSupportingBytes("external supporting data\n");
+        writeFile(QDir(library.path()).filePath(QStringLiteral("book-1/supporting.txt")),
+                  externalSupportingBytes);
         const PersistenceCheckpointHook hook = [libraryPath = library.path(), externalBytes](
             PersistenceCheckpoint checkpoint, QString *) {
             if (checkpoint == PersistenceCheckpoint::BeforeTargetRename) {
@@ -299,6 +303,27 @@ private slots:
             library.path(), chapterRelativePath, sha256(oldChapter), newChapter, hook);
         QVERIFY(!result.ok);
         QVERIFY(result.conflict);
+        QVERIFY(!result.conflictDraftPath.isEmpty());
+        QVERIFY(!result.recoveredLibraryPath.isEmpty());
+
+        QByteArray preservedDraft;
+        QVERIFY(readFile(result.conflictDraftPath, &preservedDraft));
+        QCOMPARE(preservedDraft, newChapter);
+
+        const LibraryReadResult recovered = LibraryReader::read(result.recoveredLibraryPath);
+        QVERIFY2(recovered.ok(), qPrintable(recovered.error));
+        QByteArray recoveredChapter;
+        QString recoveredReadError;
+        QVERIFY(LibraryPersistence::readLibraryFile(result.recoveredLibraryPath,
+                                                    chapterRelativePath,
+                                                    &recoveredChapter,
+                                                    &recoveredReadError));
+        QCOMPARE(recoveredChapter, newChapter);
+        QByteArray recoveredSupporting;
+        QVERIFY(readFile(QDir(result.recoveredLibraryPath)
+                            .filePath(QStringLiteral("book-1/supporting.txt")),
+                        &recoveredSupporting));
+        QCOMPARE(recoveredSupporting, externalSupportingBytes);
 
         QByteArray bytes;
         QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &bytes));
@@ -308,6 +333,57 @@ private slots:
         QVERIFY(recovery.conflict);
         QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &bytes));
         QCOMPARE(bytes, externalBytes);
+    }
+
+    void retryConflictPreservesNewestEditorDraft()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QTemporaryDir library;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        QVERIFY(library.isValid());
+        QVERIFY(writeLibrary(library.path()));
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray interruptedDraft("<p>Earlier local draft.</p>");
+        const QByteArray latestDraft("<p>Newest local draft.</p>");
+        const QByteArray externalBytes("<p>External revision.</p>");
+        const PersistenceCheckpointHook interruptAfterJournal = [](
+            PersistenceCheckpoint checkpoint, QString *error) {
+            if (checkpoint != PersistenceCheckpoint::BeforeTargetStaging) {
+                return true;
+            }
+            *error = QStringLiteral("Pause after journal creation.");
+            return false;
+        };
+        const PersistenceResult interrupted = LibraryPersistence::saveFile(
+            library.path(), chapterRelativePath, sha256(oldChapter),
+            interruptedDraft, interruptAfterJournal);
+        QVERIFY(!interrupted.ok);
+
+        writeFile(QDir(library.path()).filePath(chapterRelativePath), externalBytes);
+        const PersistenceResult retry = LibraryPersistence::saveFile(
+            library.path(), chapterRelativePath, sha256(oldChapter), latestDraft);
+        QVERIFY(!retry.ok);
+        QVERIFY(retry.conflict);
+        QVERIFY(!retry.conflictDraftPath.isEmpty());
+        QVERIFY(!retry.recoveredLibraryPath.isEmpty());
+
+        QByteArray preservedDraft;
+        QVERIFY(readFile(retry.conflictDraftPath, &preservedDraft));
+        QCOMPARE(preservedDraft, latestDraft);
+        QByteArray recoveredChapter;
+        QString recoveredReadError;
+        QVERIFY(LibraryPersistence::readLibraryFile(retry.recoveredLibraryPath,
+                                                    chapterRelativePath,
+                                                    &recoveredChapter,
+                                                    &recoveredReadError));
+        QCOMPARE(recoveredChapter, latestDraft);
+        QByteArray sharedChapter;
+        QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &sharedChapter));
+        QCOMPARE(sharedChapter, externalBytes);
     }
 
     void returnedFaultsRetainRecoverableJournal()

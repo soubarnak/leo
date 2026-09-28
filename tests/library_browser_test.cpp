@@ -31,6 +31,15 @@ void writeFile(const QString &path, const QByteArray &contents)
     }
 }
 
+QByteArray readFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return file.readAll();
+}
+
 void writeBook(const QString &root, const QString &id, const QByteArray &metadata)
 {
     const QString directory = QDir(root).filePath(id);
@@ -280,6 +289,10 @@ private slots:
         QVERIFY(refusal->isVisible());
         QVERIFY(refusal->text().contains("JSON"));
         QVERIFY(tree->isHidden());
+        QVERIFY(refusal->text().contains(QStringLiteral("Device handoff")));
+        QFile corruptMetadata(QDir(temporary.path()).filePath("library.json"));
+        QVERIFY(corruptMetadata.open(QIODevice::ReadOnly));
+        QCOMPARE(corruptMetadata.readAll(), QByteArray("{broken"));
     }
 
     void refusesUnfiledBookWithoutMetadata()
@@ -298,6 +311,27 @@ private slots:
         QVERIFY(refusal);
         QVERIFY(refusal->isVisible());
         QVERIFY(refusal->text().contains("book.json"));
+    }
+
+    void unreadableChapterStaysReadOnlyAndExplainsDeviceHandoff()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Saved text.</p>"));
+        QVERIFY(library.isValid());
+        const QString chapterPath = QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html"));
+        QVERIFY(QFile::remove(chapterPath));
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        QVERIFY(editor);
+        QVERIFY(state);
+        QVERIFY(editor->isReadOnly());
+        QVERIFY(state->text().contains(QStringLiteral("Device handoff")));
+        QVERIFY(!QFileInfo::exists(chapterPath));
     }
 
     void editsSafeProseAroundProtectedContentWithoutChangingIt()
@@ -774,6 +808,83 @@ private slots:
         QCOMPARE(chapter.readAll(), oldBytes);
     }
 
+    void externalEditPreservesDraftAndOffersExplicitRecoveredSwitch()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray externalBytes("<p>External edit.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Saved paragraph.</p>"));
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *saveButton = window.findChild<QPushButton *>("chapter-save");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        auto *switchButton = window.findChild<QPushButton *>("chapter-open-recovered");
+        QVERIFY(editor);
+        QVERIFY(saveButton);
+        QVERIFY(state);
+        QVERIFY(switchButton);
+
+        editor->setPlainText(QStringLiteral("Local chapter draft."));
+        writeFile(QDir(library.path()).filePath(
+                      QStringLiteral("book-1/chapters/chapter-a.html")),
+                  externalBytes);
+        saveButton->click();
+
+        QVERIFY(!saveButton->isEnabled());
+        QCOMPARE(saveButton->text(), QStringLiteral("Save paused"));
+        QVERIFY(state->text().contains(QStringLiteral("Device handoff")));
+        QVERIFY(switchButton->isVisible());
+        QVERIFY(!editor->isReadOnly());
+
+        editor->setPlainText(QStringLiteral("Newest local chapter draft."));
+        const QString draftDirectory = QDir(privateData.path()).filePath(
+            QStringLiteral("leo-writer/conflict-drafts"));
+        const QStringList drafts = QDir(draftDirectory).entryList(
+            {QStringLiteral("*.html")}, QDir::Files);
+        QCOMPARE(drafts.size(), 1);
+        const QString draftPath = QDir(draftDirectory).filePath(drafts.first());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            readFile(draftPath).contains(QByteArrayLiteral("Newest local chapter draft.")),
+            3000);
+        const QString recoveredDirectory = QDir(privateData.path()).filePath(
+            QStringLiteral("leo-writer/Recovered Libraries"));
+        const QStringList recoveredLibraries = QDir(recoveredDirectory).entryList(
+            {QStringLiteral("Recovered library *")}, QDir::Dirs | QDir::NoDotAndDotDot);
+        QCOMPARE(recoveredLibraries.size(), 1);
+        const QString recoveredChapter = QDir(recoveredDirectory)
+                                             .filePath(recoveredLibraries.first() +
+                                                       QStringLiteral("/book-1/chapters/chapter-a.html"));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            readFile(recoveredChapter).contains(QByteArrayLiteral("Newest local chapter draft.")),
+            3000);
+
+        QFile sharedChapter(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY(sharedChapter.open(QIODevice::ReadOnly));
+        QCOMPARE(sharedChapter.readAll(), externalBytes);
+
+        switchButton->click();
+        QApplication::processEvents();
+        openSingleChapter(&window);
+        editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        QVERIFY(editor->toPlainText().contains(QStringLiteral("Newest local chapter draft.")));
+
+        QFile sharedChapterAfterSwitch(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY(sharedChapterAfterSwitch.open(QIODevice::ReadOnly));
+        QCOMPARE(sharedChapterAfterSwitch.readAll(), externalBytes);
+    }
+
     void pausesRecoveryWhenLibraryBytesMatchNeitherJournalHash()
     {
         QTemporaryDir privateData;
@@ -808,6 +919,21 @@ private slots:
         QVERIFY(refusal->isVisible());
         QVERIFY(refusal->text().contains(QStringLiteral("paused"), Qt::CaseInsensitive));
         QVERIFY(refusal->text().contains(QStringLiteral("external change"), Qt::CaseInsensitive));
+        auto *switchButton = window.findChild<QPushButton *>("library-open-recovered");
+        QVERIFY(refusal->text().contains(QStringLiteral("Device handoff")));
+        QVERIFY(switchButton);
+        QVERIFY(switchButton->isVisible());
+        switchButton->click();
+        QApplication::processEvents();
+        QVERIFY(!refusal->isVisible());
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        QVERIFY(editor->toPlainText().contains(QStringLiteral("Recovered paragraph.")));
+
+        QFile sharedChapter(QDir(library.path()).filePath(relativePath));
+        QVERIFY(sharedChapter.open(QIODevice::ReadOnly));
+        QCOMPARE(sharedChapter.readAll(), externalBytes);
     }
 
     void recoversInterruptedSaveWhenFlushedStageRemains()

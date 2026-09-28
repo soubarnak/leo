@@ -57,6 +57,13 @@ constexpr int BookIdRole = Qt::UserRole + 2;
 constexpr int ChapterIdRole = Qt::UserRole + 3;
 constexpr int ChapterItemKind = 1;
 
+QString deviceHandoffGuidance()
+{
+    return QStringLiteral(
+        "Device handoff: close the book on one device and let synchronization finish before editing on another. "
+        "LEO cannot detect every legacy write race or prevent sync software from exposing an intermediate multi-file save.");
+}
+
 struct ClipboardProvenance {
     QString context;
     QString text;
@@ -676,6 +683,13 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     saveButton_->setObjectName(QStringLiteral("chapter-save"));
     connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
     editorToolbar->addWidget(saveButton_);
+    openRecoveredLibraryButton_ = new QPushButton(
+        QStringLiteral("Switch to Recovered Library"), editorChrome_);
+    openRecoveredLibraryButton_->setObjectName(QStringLiteral("chapter-open-recovered"));
+    openRecoveredLibraryButton_->setVisible(false);
+    connect(openRecoveredLibraryButton_, &QPushButton::clicked,
+            this, &LibraryWindow::switchToRecoveredLibrary);
+    editorToolbar->addWidget(openRecoveredLibraryButton_);
     repairCopyButton_ = new QPushButton(QStringLiteral("Save Repair Copy…"), editorChrome_);
     repairCopyButton_->setObjectName(QStringLiteral("chapter-repair-copy"));
     repairCopyButton_->setVisible(false);
@@ -731,6 +745,13 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     refusal_->setWordWrap(true);
     refusal_->setAlignment(Qt::AlignCenter);
     refusalLayout->addWidget(refusal_);
+    openRecoveredFromRefusalButton_ = new QPushButton(
+        QStringLiteral("Switch to Recovered Library"), refusalPage_);
+    openRecoveredFromRefusalButton_->setObjectName(QStringLiteral("library-open-recovered"));
+    openRecoveredFromRefusalButton_->setVisible(false);
+    connect(openRecoveredFromRefusalButton_, &QPushButton::clicked,
+            this, &LibraryWindow::switchToRecoveredLibrary);
+    refusalLayout->addWidget(openRecoveredFromRefusalButton_, 0, Qt::AlignHCenter);
     auto *chooseAgain = new QPushButton(QStringLiteral("Choose another Library…"), refusalPage_);
     connect(chooseAgain, &QPushButton::clicked, this, &LibraryWindow::chooseLibrary);
     refusalLayout->addWidget(chooseAgain, 0, Qt::AlignHCenter);
@@ -791,8 +812,16 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!savePendingEdits()) {
         return false;
     }
+    if (canonicalOrCleanPath(path) != canonicalOrCleanPath(recoveredLibraryPath_)) {
+        recoveredLibraryPath_.clear();
+        openRecoveredLibraryButton_->hide();
+        openRecoveredFromRefusalButton_->hide();
+    }
 
     const PersistenceResult recovery = LibraryPersistence::recoverPendingSaves(path);
+    recoveredLibraryPath_ = recovery.recoveredLibraryPath;
+    openRecoveredLibraryButton_->hide();
+    openRecoveredFromRefusalButton_->setVisible(!recoveredLibraryPath_.isEmpty());
     recoveryNotice_->hide();
     tree_->clear();
     if (!recovery.ok) {
@@ -802,8 +831,8 @@ bool LibraryWindow::openLibrary(const QString &path)
             ? QStringLiteral("LEO recovered an earlier interrupted save, then paused this Library.")
             : QStringLiteral("LEO paused this Library while recovering an interrupted save.");
         refusal_->setText(QStringLiteral(
-            "%1\n\n%2\n\nThe unresolved save journal and unexpected Library bytes remain available for inspection.")
-                              .arg(recoveredMessage, recovery.error));
+            "%1\n\n%2\n\n%3\n\nThe unresolved save journal and shared Library bytes remain available for inspection.")
+                              .arg(recoveredMessage, recovery.error, deviceHandoffGuidance()));
         pages_->setCurrentWidget(refusalPage_);
         statusBar()->showMessage(QStringLiteral("Library save recovery paused for inspection"));
         return false;
@@ -814,8 +843,8 @@ bool LibraryWindow::openLibrary(const QString &path)
         qWarning().noquote() << "Library open refused:" << result.error;
         activeLibraryPath_.clear();
         refusal_->setText(QStringLiteral(
-            "LEO refused to open this Library.\n\n%1")
-                              .arg(result.error));
+            "LEO refused to open this Library. It made no Library changes.\n\n%1\n\n%2")
+                              .arg(result.error, deviceHandoffGuidance()));
         pages_->setCurrentWidget(refusalPage_);
         statusBar()->showMessage(QStringLiteral("No Library open"));
         return false;
@@ -871,6 +900,8 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
     sourceAvailable_ = false;
     repairCopyButton_->setVisible(false);
     chapterDirty_ = false;
+    chapterConflict_ = false;
+    conflictDraftPath_.clear();
     saveFailed_ = false;
     chapterReadOnly_ = true;
 
@@ -884,7 +915,9 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item)
         lastValidEditorText_.clear();
         static_cast<ProtectedChapterEditor *>(chapterEditor_)->setProtectedTokens({});
         chapterEditor_->clear();
-        editorState_->setText(QStringLiteral("Read-only: %1").arg(readError));
+        saveFailed_ = true;
+        updateEditorState(QStringLiteral("Read-only: %1 %2")
+                              .arg(readError, deviceHandoffGuidance()));
         chapterEditor_->setReadOnly(true);
         saveButton_->setEnabled(false);
         loadingChapter_ = false;
@@ -951,11 +984,56 @@ bool LibraryWindow::saveCurrentChapter()
         return false;
     }
 
+    if (chapterConflict_) {
+        const PersistenceResult result = LibraryPersistence::updateConflictDraft(
+            activeLibraryPath_, activeChapterRelativePath_, conflictDraftPath_,
+            recoveredLibraryPath_, newBytes);
+        if (!result.ok) {
+            saveFailed_ = true;
+            conflictDraftPath_ = result.conflictDraftPath;
+            recoveredLibraryPath_ = result.recoveredLibraryPath;
+            openRecoveredLibraryButton_->setVisible(!recoveredLibraryPath_.isEmpty());
+            updateEditorState(result.error + QStringLiteral(" ") + deviceHandoffGuidance());
+            statusBar()->showMessage(QStringLiteral("Local draft save failed; shared save remains paused"));
+            return false;
+        }
+
+        chapterDirty_ = false;
+        conflictDraftPath_ = result.conflictDraftPath;
+        recoveredLibraryPath_ = result.recoveredLibraryPath;
+        saveFailed_ = false;
+        openRecoveredLibraryButton_->setVisible(!recoveredLibraryPath_.isEmpty());
+        QString message;
+        if (!result.error.isEmpty()) {
+            message = result.error + QStringLiteral(" ") + deviceHandoffGuidance();
+        } else if (recoveredLibraryPath_.isEmpty()) {
+            message = QStringLiteral("Local draft saved at %1. No verified Recovered Library is available. %2")
+                          .arg(conflictDraftPath_, deviceHandoffGuidance());
+        } else {
+            message = QStringLiteral("Local draft saved in the Recovered Library. The shared Library remains unchanged. %1")
+                          .arg(deviceHandoffGuidance());
+        }
+        updateEditorState(message);
+        statusBar()->showMessage(QStringLiteral("Local draft saved; shared save remains paused"));
+        return true;
+    }
+
     const PersistenceResult result = LibraryPersistence::saveFile(
         activeLibraryPath_, activeChapterRelativePath_, sourceHash_, newBytes);
     if (!result.ok) {
         saveFailed_ = true;
-        updateEditorState(result.error);
+        if (result.conflict) {
+            chapterConflict_ = true;
+            conflictDraftPath_ = result.conflictDraftPath;
+            recoveredLibraryPath_ = result.recoveredLibraryPath;
+            openRecoveredLibraryButton_->setVisible(!recoveredLibraryPath_.isEmpty());
+            openRecoveredFromRefusalButton_->hide();
+            recoveryNotice_->hide();
+        }
+        const QString message = result.conflict
+            ? result.error + QStringLiteral(" ") + deviceHandoffGuidance()
+            : result.error;
+        updateEditorState(message);
         statusBar()->showMessage(result.conflict
                                      ? QStringLiteral("Unsaved changes — save paused")
                                      : QStringLiteral("Unsaved changes — save failed"));
@@ -967,11 +1045,52 @@ bool LibraryWindow::saveCurrentChapter()
     chapterDocument_.text = chapterEditor_->toPlainText();
     lastValidEditorText_ = chapterDocument_.text;
     chapterDirty_ = false;
+    chapterConflict_ = false;
+    conflictDraftPath_.clear();
     saveFailed_ = false;
+    chapterEditor_->setReadOnly(false);
+    recoveredLibraryPath_.clear();
+    openRecoveredLibraryButton_->hide();
+    openRecoveredFromRefusalButton_->hide();
+    recoveryNotice_->hide();
     updateEditorState(chapterDocument_.hasProtectedContent()
                           ? QStringLiteral("Protected legacy content stays unchanged. Changes are saved.")
                           : QStringLiteral("Plain prose is editable. Changes save after a short pause."));
     return true;
+}
+
+void LibraryWindow::switchToRecoveredLibrary()
+{
+    if (!savePendingEdits()) {
+        return;
+    }
+    if (recoveredLibraryPath_.isEmpty()) {
+        return;
+    }
+
+    const QString recoveredPath = recoveredLibraryPath_;
+    const LibraryReadResult recovered = LibraryReader::read(recoveredPath);
+    if (!recovered.ok()) {
+        const QString message = QStringLiteral(
+            "LEO could not verify the Recovered library. The local draft remains preserved. %1\n%2")
+                                   .arg(deviceHandoffGuidance(), recovered.error);
+        if (pages_->currentWidget() == editorPage_) {
+            updateEditorState(message);
+        } else {
+            refusal_->setText(message);
+        }
+        return;
+    }
+
+    saveTimer_->stop();
+    chapterDirty_ = false;
+    chapterConflict_ = false;
+    conflictDraftPath_.clear();
+    saveFailed_ = false;
+    if (openLibrary(recoveredPath)) {
+        statusBar()->showMessage(QStringLiteral(
+            "Recovered library is active. Original shared Library remains unchanged."));
+    }
 }
 
 bool LibraryWindow::savePendingEdits()
@@ -1022,14 +1141,28 @@ void LibraryWindow::saveRepairCopy()
 
 void LibraryWindow::updateEditorState(const QString &message)
 {
-    chromeHoverFilter_->setAttention(saveFailed_);
+    chromeHoverFilter_->setAttention(saveFailed_ && !chapterConflict_);
     if (!message.isEmpty()) {
-        editorState_->setText(chapterDirty_ && saveFailed_
-                                  ? QStringLiteral("Unsaved changes — %1 Retry with Save.").arg(message)
-                                  : message);
+        if (chapterDirty_ && saveFailed_ && chapterConflict_) {
+            editorState_->setText(QStringLiteral("Unsaved changes — save paused. %1")
+                                      .arg(message));
+        } else if (chapterDirty_ && chapterConflict_) {
+            editorState_->setText(QStringLiteral(
+                "New edits stay outside the shared Library while saving is paused. %1")
+                                      .arg(message));
+        } else if (chapterDirty_ && saveFailed_) {
+            editorState_->setText(QStringLiteral("Unsaved changes — %1 Retry with Save.")
+                                      .arg(message));
+        } else {
+            editorState_->setText(message);
+        }
     }
-    saveButton_->setEnabled(chapterDirty_ && !chapterReadOnly_);
-    saveButton_->setText(saveFailed_ ? QStringLiteral("Retry Save") : QStringLiteral("Save"));
+    saveButton_->setEnabled(chapterDirty_ && !chapterReadOnly_ && !chapterConflict_);
+    saveButton_->setText(chapterConflict_
+                             ? QStringLiteral("Save paused")
+                             : saveFailed_ && chapterDirty_
+                                   ? QStringLiteral("Retry Save")
+                                   : QStringLiteral("Save"));
     if (!chapterDirty_) {
         setWindowTitle(QStringLiteral("LEO"));
     } else if (saveFailed_) {

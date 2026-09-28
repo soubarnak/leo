@@ -30,11 +30,14 @@ private:
     bool saveCurrentChapter();
     bool savePendingEdits();
     void saveRepairCopy();
+    void switchToRecoveredLibrary();
     void updateEditorState(const QString &message = QString());
     void closeEvent(QCloseEvent *event) override;
 
     QStackedWidget *pages_ = nullptr;
     QLabel *recoveryNotice_ = nullptr;
+    QPushButton *openRecoveredLibraryButton_ = nullptr;
+    QPushButton *openRecoveredFromRefusalButton_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     QWidget *editorPage_ = nullptr;
     QLabel *editorTitle_ = nullptr;
@@ -49,6 +52,8 @@ private:
     QLabel *refusal_ = nullptr;
     QString defaultPath_;
     QString activeLibraryPath_;
+    QString recoveredLibraryPath_;
+    QString conflictDraftPath_;
     QString activeChapterRelativePath_;
     QByteArray sourceHash_;
     QByteArray sourceBytes_;
@@ -56,6 +61,7 @@ private:
     LegacyChapterLinkContext chapterLinks_;
     QString lastValidEditorText_;
     bool chapterDirty_ = false;
+    bool chapterConflict_ = false;
     bool chapterReadOnly_ = true;
     bool sourceAvailable_ = false;
     bool loadingChapter_ = false;

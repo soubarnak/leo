@@ -43,6 +43,8 @@ struct PersistenceResult {
     bool recovered = false;
     QString error;
     QByteArray savedHash;
+    QString conflictDraftPath;
+    QString recoveredLibraryPath;
 };
 
 class LibraryPersistence final {
@@ -55,6 +57,12 @@ public:
     static PersistenceResult recoverPendingSaves(
         const QString &libraryPath,
         const PersistenceIoFailureHook &ioFailure = {});
+    static PersistenceResult updateConflictDraft(
+        const QString &libraryPath,
+        const QString &relativePath,
+        const QString &draftPath,
+        const QString &recoveredLibraryPath,
+        const QByteArray &draftBytes);
     static PersistenceResult saveFile(const QString &libraryPath,
                                       const QString &relativePath,
                                       const QByteArray &expectedHash,
