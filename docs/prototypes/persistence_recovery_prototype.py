@@ -92,6 +92,27 @@ class Store:
             replace_durable(folder / "external", external)
         return folder
 
+    def recover_conflict_to_library(self, relative: str, label: str) -> Path:
+        """Build an inspectable local library; never replace the shared library."""
+        if list(self.pending.iterdir()):
+            raise RuntimeError("finish pending saves before conflict recovery")
+        local = checked(self.conflicts / relative.replace("/", "__") / "local")
+        source = self.inventory()
+        if {name: digest(data) for name, data in self.inventory().items()} != {
+                name: digest(data) for name, data in source.items()}:
+            raise RuntimeError("shared library changed during conflict recovery")
+        recovered = self.recovery / f"recovered-conflict-{label}"
+        if recovered.exists():
+            raise FileExistsError(recovered)
+        recovered.mkdir()
+        try:
+            for name, data in source.items():
+                replace_durable(recovered / name, local if name == relative else data)
+        except Exception:
+            shutil.rmtree(recovered)
+            raise
+        return recovered
+
     def save(self, changes: dict[str, bytes], expected: dict[str, str | None],
              fault: str | None = None, legacy_race=None, late_legacy_race=None) -> str:
         """Journal before applying; recover rolls forward only if inputs still match."""
@@ -315,6 +336,12 @@ def main() -> None:
         scenario("observed external change preserves both versions",
                  outcome.startswith("conflict") and checked(chapter) == b"<p>Pocket edit</p>" and
                  (store.conflicts / "book-synthetic__chapters__chapter-1.html" / "local").read_bytes() == local)
+        conflict_library = store.recover_conflict_to_library(
+            "book-synthetic/chapters/chapter-1.html", "local-choice")
+        scenario("local choice creates separate library without changing shared chapter",
+                 checked(chapter) == b"<p>Pocket edit</p>" and
+                 checked(conflict_library / "book-synthetic" / "chapters" / "chapter-1.html") == local and
+                 checked(conflict_library / "book-synthetic" / "book.json") == checked(metadata))
         late_result = store.save(
             {"book-synthetic/chapters/chapter-1.html": b"<p>Native replacement</p>"},
             {"book-synthetic/chapters/chapter-1.html": digest(checked(chapter))},

@@ -40,8 +40,8 @@ function decide(previous, action) {
       s.message = 'Shared version kept. Local copy remains available for inspection.'; break;
     case 'useLocal':
       if (!s.paused) { s.message = 'No conflict to resolve.'; break; }
-      s.live = s.localCopy; s.draft = null; s.paused = false; s.external = null;
-      s.message = 'Local version chosen explicitly. External copy remains available for inspection.'; break;
+      s.recovered = s.localCopy; s.draft = null; s.paused = false; s.external = null; s.inspected = false;
+      s.message = 'Local version placed in a separate recovered library. Shared chapter remains unchanged. Inspect before switching.'; break;
     case 'restore':
       if (s.recovered) { s.message = 'Recovered library already prepared.'; break; }
       s.safety = s.live; s.recovered = s.savedSnapshot; s.inspected = false;
@@ -63,8 +63,8 @@ const labels = {edit:'Edit chapter',external:'Pocket changes shared chapter',sav
 const walks = [
   {title:'Accidental overlap',description:'Watch what happens when Pocket changes the chapter before your local save.',
    steps:['edit','external','save','keepExternal']},
-  {title:'Choose local writing',description:'Both copies survive. Choosing local writing requires an explicit decision.',
-   steps:['edit','external','save','useLocal']},
+  {title:'Choose local writing',description:'Both copies survive. Local writing goes into a separate recovered library; the shared chapter stays as Pocket wrote it.',
+   steps:['edit','external','save','useLocal','inspect','switch']},
   {title:'Restore safely',description:'Restoration makes a new library. Inspection comes before switching.',
    steps:['restore','inspect','switch']},
   {title:'Safety failure',description:'A failed safety snapshot stops restoration.',steps:['failedSafety']}
