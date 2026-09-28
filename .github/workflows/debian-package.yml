@@ -48,7 +48,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential debhelper desktop-file-utils fakeroot \
+            build-essential cmake debhelper desktop-file-utils fakeroot \
             libwww-dict-leo-org-perl qt6-base-dev qt6-qpa-plugins
 
       - name: Build current Debian package
