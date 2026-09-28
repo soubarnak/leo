@@ -1,0 +1,761 @@
+{
+  "id": "pdf-PROTOTYPE",
+  "title": "The River Ledger",
+  "subtitle": "A synthetic export sample",
+  "author": "Ada Example",
+  "sections": [
+    {
+      "num": 1,
+      "heading": "Chapter 1 — Arrival",
+      "paras": [
+        {
+          "text": "The river kept its own ledger. Every name mattered.",
+          "html": "<p>The <i>river</i> kept its own ledger. <b>Every name mattered.</b></p>",
+          "runs": [
+            {
+              "text": "The "
+            },
+            {
+              "text": "river",
+              "i": true
+            },
+            {
+              "text": " kept its own ledger. "
+            },
+            {
+              "text": "Every name mattered.",
+              "b": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "This first paragraph tests the opening initial, body indentation, and line spacing.",
+          "html": "<p>This first paragraph tests the opening initial, body indentation, and line spacing.</p>",
+          "runs": [
+            {
+              "text": "This first paragraph tests the opening initial, body indentation, and line spacing."
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "A centered line after two ordinary paragraphs.",
+          "html": "<p style=\"text-align:center\">A centered line after two ordinary paragraphs.</p>",
+          "runs": [
+            {
+              "text": "A centered line after two ordinary paragraphs."
+            }
+          ],
+          "align": "center",
+          "sceneBreak": false
+        },
+        {
+          "text": "A right aligned note.",
+          "html": "<p style=\"text-align:right\">A right aligned note.</p>",
+          "runs": [
+            {
+              "text": "A right aligned note."
+            }
+          ],
+          "align": "right",
+          "sceneBreak": false
+        },
+        {
+          "text": "",
+          "html": "<p class=\"scene-break\">***</p>",
+          "runs": [],
+          "align": "",
+          "sceneBreak": true
+        },
+        {
+          "text": "After the scene break, the story starts again with a fresh paragraph.",
+          "html": "<p>After the scene break, the story starts again with a fresh paragraph.</p>",
+          "runs": [
+            {
+              "text": "After the scene break, the story starts again with a fresh paragraph."
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Mixed script: বাংলা; العربية; é; 👩🏽‍💻.",
+          "html": "<p>Mixed script: বাংলা; العربية; é; 👩🏽‍💻.</p>",
+          "runs": [
+            {
+              "text": "Mixed script: বাংলা; العربية; é; 👩🏽‍💻."
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        }
+      ]
+    },
+    {
+      "num": 2,
+      "heading": "Chapter 2 — The Crossing",
+      "paras": [
+        {
+          "text": "A second chapter must start on a new page, with its heading centered.",
+          "html": "<p>A second chapter must start on a new page, with its heading centered.</p>",
+          "runs": [
+            {
+              "text": "A second chapter must start on a new page, with its heading centered."
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 1. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 1. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 1. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 2. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 2. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 2. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 3. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 3. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 3. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 4. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 4. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 4. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 5. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 5. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 5. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 6. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 6. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 6. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 7. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 7. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 7. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 8. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 8. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 8. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 9. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 9. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 9. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 10. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 10. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 10. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 11. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 11. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 11. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 12. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 12. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 12. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 13. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 13. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 13. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 14. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 14. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 14. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 15. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 15. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 15. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 16. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 16. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 16. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 17. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 17. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 17. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 18. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 18. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 18. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 19. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 19. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 19. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 20. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 20. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 20. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 21. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 21. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 21. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 22. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 22. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 22. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 23. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 23. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 23. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 24. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 24. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 24. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 25. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 25. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 25. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 26. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 26. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 26. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 27. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 27. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 27. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 28. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 28. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 28. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 29. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 29. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 29. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 30. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 30. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 30. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 31. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 31. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 31. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 32. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 32. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 32. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 33. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 33. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 33. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        },
+        {
+          "text": "Paragraph 34. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. This clause is bold. This one is italic.",
+          "html": "<p>Paragraph 34. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. <b>This clause is bold.</b><i> This one is italic.</i></p>",
+          "runs": [
+            {
+              "text": "Paragraph 34. The river turns past the old bridge while a writer checks page flow, line breaks, and the readable page edge. "
+            },
+            {
+              "text": "This clause is bold.",
+              "b": true
+            },
+            {
+              "text": " This one is italic.",
+              "i": true
+            }
+          ],
+          "align": "",
+          "sceneBreak": false
+        }
+      ]
+    }
+  ]
+}

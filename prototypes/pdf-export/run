@@ -1,0 +1,31 @@
+#!/bin/sh
+# THROWAWAY decision probe. Only synthetic fixture data is read or written.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH= cd -- "$here/../.." && pwd)
+electron=${LEO_ELECTRON:-$root/node_modules/.bin/electron}
+if [ ! -x "$electron" ]; then
+  echo 'Set LEO_ELECTRON to an installed Electron 43 executable.' >&2
+  exit 2
+fi
+if [ -n "${LEO_FONTCONFIG_FILE:-}" ]; then
+  FONTCONFIG_FILE=$LEO_FONTCONFIG_FILE
+  export FONTCONFIG_FILE
+fi
+build=$(mktemp -d -t leo-pdf-PROTOTYPE-XXXXXXXX)
+trap 'rm -rf -- "$build"' EXIT
+"$electron" "$here/baseline.js"
+c++ -std=c++17 "$here/qt-print.cpp" $(pkg-config --cflags --libs Qt6Widgets Qt6PrintSupport) -o "$build/qt-print"
+c++ -std=c++17 -Wno-sfinae-incomplete "$here/pango-print.cpp" $(pkg-config --cflags --libs Qt6Core pangocairo cairo) -o "$build/pango-print"
+for paper in A4 Letter; do
+  lower=$(printf '%s' "$paper" | tr '[:upper:]' '[:lower:]')
+  "$build/qt-print" "$here/evidence/baseline.html" "$here/evidence/qt-$lower.pdf" "$paper" 2>"$build/qt-stderr.txt"
+  "$build/pango-print" "$here/evidence/fixture.json" "$here/evidence/pango-$lower.pdf" "$paper"
+done
+for page in 1 2 3; do
+  pdftoppm -f "$page" -l "$page" -scale-to 850 -png -singlefile "$here/evidence/baseline-a4.pdf" "$build/baseline-$page"
+  pdftoppm -f "$page" -l "$page" -scale-to 850 -png -singlefile "$here/evidence/pango-a4.pdf" "$build/pango-$page"
+done
+montage "$build/baseline-1.png" "$build/pango-1.png" -tile 2x1 -geometry +8+8 "$here/evidence/compare-cover.png"
+montage "$build/baseline-2.png" "$build/pango-2.png" -tile 2x1 -geometry +8+8 "$here/evidence/compare-title.png"
+montage "$build/baseline-3.png" "$build/pango-3.png" -tile 2x1 -geometry +8+8 "$here/evidence/compare-chapter.png"
