@@ -34,7 +34,9 @@ int main(int argc, char *argv[])
         QGuiApplication::setDesktopFileName(QStringLiteral("io.github.soubarnak.LeoWriter"));
     }
 
-    QCoreApplication::setApplicationName(QStringLiteral("LEO"));
+    QCoreApplication::setApplicationName(
+        commandLineQuery ? QStringLiteral("LEO")
+                         : QStringLiteral("io.github.soubarnak.LeoWriter"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.soubarnak"));
 
