@@ -431,6 +431,56 @@ bool verifyRecord(const QString &kind,
     return true;
 }
 
+struct LinkedMarkerRules {
+    QString className;
+    QString kind;
+    QString markerName;
+    QString idAttribute;
+    QString fileName;
+    const QSet<QString> &knownIds;
+    const QString &readError;
+    const QHash<QString, QString> &chapterIds;
+    QSet<QString> &seenIds;
+};
+
+bool validateLinkedMarker(const HtmlTag &tag,
+                          const QStringList &tagClasses,
+                          const QString &chapterId,
+                          const LinkedMarkerRules &rules,
+                          QString *error)
+{
+    if (!tagClasses.contains(rules.className)) {
+        return true;
+    }
+    if (tag.name != QStringLiteral("span")) {
+        *error = QStringLiteral("A %1 link is attached to a non-span element.")
+                     .arg(rules.kind);
+        return false;
+    }
+    if (!tag.attributes.contains(rules.idAttribute)) {
+        *error = QStringLiteral("A %1 has no %2 link.")
+                     .arg(rules.markerName, rules.idAttribute);
+        return false;
+    }
+    const QString id = decodedAttributeValue(tag.attributes.value(rules.idAttribute));
+    if (!verifyRecord(rules.kind, id, rules.knownIds, rules.readError, rules.fileName, error)) {
+        return false;
+    }
+    if (rules.seenIds.contains(id)) {
+        *error = QStringLiteral("%1 link '%2' appears more than once in this chapter.")
+                     .arg(rules.kind, id);
+        return false;
+    }
+    const QString linkedChapter = rules.chapterIds.value(id);
+    if (!linkedChapter.isEmpty() && !chapterId.isEmpty() && linkedChapter != chapterId) {
+        *error = QStringLiteral("%1 link '%2' points to another chapter.")
+                     .arg(rules.kind, id);
+        return false;
+    }
+    rules.seenIds.insert(id);
+    return true;
+}
+
 bool validateLinks(const QString &html,
                    const LegacyChapterLinkContext &links,
                    QString *error)
@@ -439,6 +489,16 @@ bool validateLinks(const QString &html,
     QSet<QString> darlingMarkers;
     QSet<QString> sectionParagraphs;
     QSet<QString> sectionBreaks;
+    const LinkedMarkerRules stickyRules{
+        QStringLiteral("ph-mark"), QStringLiteral("Placeholder"),
+        QStringLiteral("placeholder marker"), QStringLiteral("data-sid"),
+        QStringLiteral("stickies.json"), links.stickies.ids, links.stickies.readError,
+        links.stickies.chapterIds, stickyMarkers};
+    const LinkedMarkerRules darlingRules{
+        QStringLiteral("darling-anchor"), QStringLiteral("Darling"),
+        QStringLiteral("Darling anchor"), QStringLiteral("data-did"),
+        QStringLiteral("darlings.json"), links.darlings.ids, links.darlings.readError,
+        links.darlings.chapterIds, darlingMarkers};
     qsizetype cursor = 0;
     while (cursor < html.size()) {
         const qsizetype tagStart = html.indexOf(QLatin1Char('<'), cursor);
@@ -457,62 +517,9 @@ bool validateLinks(const QString &html,
         }
 
         const QStringList tagClasses = classes(tag);
-        if (tagClasses.contains(QStringLiteral("ph-mark"))) {
-            if (tag.name != QStringLiteral("span")) {
-                *error = QStringLiteral("A placeholder link is attached to a non-span element.");
-                return false;
-            }
-            const QString id = decodedAttributeValue(
-                tag.attributes.value(QStringLiteral("data-sid")));
-            if (!tag.attributes.contains(QStringLiteral("data-sid"))) {
-                *error = QStringLiteral("A placeholder marker has no data-sid link.");
-                return false;
-            }
-            if (!verifyRecord(QStringLiteral("Placeholder"), id, links.stickyIds,
-                              links.stickyReadError, QStringLiteral("stickies.json"), error)) {
-                return false;
-            }
-            if (stickyMarkers.contains(id)) {
-                *error = QStringLiteral("Placeholder link '%1' appears more than once in this chapter.")
-                             .arg(id);
-                return false;
-            }
-            const QString linkedChapter = links.stickyChapterIds.value(id);
-            if (!linkedChapter.isEmpty() && !links.chapterId.isEmpty() &&
-                linkedChapter != links.chapterId) {
-                *error = QStringLiteral("Placeholder link '%1' points to another chapter.").arg(id);
-                return false;
-            }
-            stickyMarkers.insert(id);
-        }
-
-        if (tagClasses.contains(QStringLiteral("darling-anchor"))) {
-            if (tag.name != QStringLiteral("span")) {
-                *error = QStringLiteral("A Darling link is attached to a non-span element.");
-                return false;
-            }
-            const QString id = decodedAttributeValue(
-                tag.attributes.value(QStringLiteral("data-did")));
-            if (!tag.attributes.contains(QStringLiteral("data-did"))) {
-                *error = QStringLiteral("A Darling anchor has no data-did link.");
-                return false;
-            }
-            if (!verifyRecord(QStringLiteral("Darling"), id, links.darlingIds,
-                              links.darlingReadError, QStringLiteral("darlings.json"), error)) {
-                return false;
-            }
-            if (darlingMarkers.contains(id)) {
-                *error = QStringLiteral("Darling link '%1' appears more than once in this chapter.")
-                             .arg(id);
-                return false;
-            }
-            const QString linkedChapter = links.darlingChapterIds.value(id);
-            if (!linkedChapter.isEmpty() && !links.chapterId.isEmpty() &&
-                linkedChapter != links.chapterId) {
-                *error = QStringLiteral("Darling link '%1' points to another chapter.").arg(id);
-                return false;
-            }
-            darlingMarkers.insert(id);
+        if (!validateLinkedMarker(tag, tagClasses, links.chapterId, stickyRules, error) ||
+            !validateLinkedMarker(tag, tagClasses, links.chapterId, darlingRules, error)) {
+            return false;
         }
 
         const bool ghost = tagClasses.contains(QStringLiteral("ghost"));

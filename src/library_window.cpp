@@ -8,7 +8,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QClipboard>
 #include <QCloseEvent>
+#include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDesktopServices>
@@ -41,6 +43,8 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QUrl>
+#include <QUuid>
+#include <QVector>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -52,6 +56,24 @@ constexpr int ItemKindRole = Qt::UserRole + 1;
 constexpr int BookIdRole = Qt::UserRole + 2;
 constexpr int ChapterIdRole = Qt::UserRole + 3;
 constexpr int ChapterItemKind = 1;
+
+struct ClipboardProvenance {
+    QString context;
+    QString text;
+    int region = -1;
+
+    void clear()
+    {
+        context.clear();
+        text.clear();
+        region = -1;
+    }
+};
+
+struct ProtectedSpan {
+    qsizetype start;
+    qsizetype end;
+};
 
 void addBook(QTreeWidgetItem *parent, const Book &book)
 {
@@ -157,9 +179,9 @@ LegacyChapterLinkContext loadChapterLinks(const QString &libraryPath,
     links.chapterId = chapterId;
     const QString bookDirectory = bookId + QLatin1Char('/');
     readJsonArray(libraryPath, bookDirectory + QStringLiteral("stickies.json"),
-                  &links.stickyIds, &links.stickyChapterIds, &links.stickyReadError);
+                  &links.stickies.ids, &links.stickies.chapterIds, &links.stickies.readError);
     readJsonArray(libraryPath, bookDirectory + QStringLiteral("darlings.json"),
-                  &links.darlingIds, &links.darlingChapterIds, &links.darlingReadError);
+                  &links.darlings.ids, &links.darlings.chapterIds, &links.darlings.readError);
 
     const QString metadataPath = bookDirectory + QStringLiteral("book.json");
     QByteArray metadataBytes;
@@ -246,11 +268,17 @@ public:
     explicit ProtectedChapterEditor(QWidget *parent = nullptr)
         : QPlainTextEdit(parent)
     {
+        connect(this, &QPlainTextEdit::selectionChanged, this, [this] {
+            rememberPrimarySelection();
+        });
     }
 
     void setProtectedTokens(const QStringList &tokens)
     {
         protectedTokens_ = tokens;
+        protectionContext_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        copiedSource_.clear();
+        primarySelection_.clear();
     }
 
     void setRefusalHandler(std::function<void()> handler)
@@ -265,8 +293,20 @@ protected:
         const bool selectionTouches = selectionTouchesProtected(cursor);
         bool refuse = false;
 
-        if (event->matches(QKeySequence::Copy) || event->matches(QKeySequence::Cut)) {
+        if (event->matches(QKeySequence::Copy)) {
             refuse = selectionTouches;
+            if (!refuse && cursor.hasSelection() && !protectedTokens_.isEmpty()) {
+                copySelectionForProtectedContent();
+                event->accept();
+                return;
+            }
+        } else if (event->matches(QKeySequence::Cut)) {
+            refuse = selectionTouches;
+            if (!refuse && cursor.hasSelection() && !protectedTokens_.isEmpty()) {
+                cutSelectionForProtectedContent();
+                event->accept();
+                return;
+            }
         } else if (event->matches(QKeySequence::Paste)) {
             refuse = selectionTouches || cursorInsideProtected(cursor.position());
         } else if (!cursor.hasSelection() && event->key() == Qt::Key_Backspace) {
@@ -302,7 +342,10 @@ protected:
     void insertFromMimeData(const QMimeData *source) override
     {
         const QTextCursor cursor = textCursor();
-        if (selectionTouchesProtected(cursor) || cursorInsideProtected(cursor.position())) {
+        const int destination = cursor.hasSelection() ? cursor.selectionStart()
+                                                      : cursor.position();
+        if (selectionTouchesProtected(cursor) || cursorInsideProtected(cursor.position()) ||
+            pasteCrossesProtectedContent(source, destination)) {
             reportRefusal();
             return;
         }
@@ -327,7 +370,126 @@ protected:
         QPlainTextEdit::dropEvent(event);
     }
 
+    void contextMenuEvent(QContextMenuEvent *event) override
+    {
+        QMenu *menu = createStandardContextMenu(event->pos());
+        if (!protectedTokens_.isEmpty()) {
+            for (QAction *action : menu->actions()) {
+                if (action->shortcut() == QKeySequence::Cut) {
+                    QObject::disconnect(action, nullptr, this, nullptr);
+                    connect(action, &QAction::triggered, this, [this] {
+                        cutSelectionForProtectedContent();
+                    });
+                } else if (action->shortcut() == QKeySequence::Copy) {
+                    QObject::disconnect(action, nullptr, this, nullptr);
+                    connect(action, &QAction::triggered, this, [this] {
+                        copySelectionForProtectedContent();
+                    });
+                }
+            }
+        }
+        menu->exec(event->globalPos());
+        delete menu;
+    }
+
 private:
+    QVector<ProtectedSpan> protectedSpans() const
+    {
+        QVector<ProtectedSpan> spans;
+        const QString text = toPlainText();
+        spans.reserve(protectedTokens_.size());
+        for (const QString &token : protectedTokens_) {
+            const qsizetype start = text.indexOf(token);
+            if (start >= 0) {
+                spans.append({start, start + token.size()});
+            }
+        }
+        return spans;
+    }
+
+    static int protectedRegionAt(qsizetype position, const QVector<ProtectedSpan> &spans)
+    {
+        int region = 0;
+        for (const auto &span : spans) {
+            if (span.end <= position) {
+                ++region;
+            }
+        }
+        return region;
+    }
+
+    void copySelectionForProtectedContent()
+    {
+        const QTextCursor selection = textCursor();
+        if (!selection.hasSelection()) {
+            return;
+        }
+        if (selectionTouchesProtected(selection)) {
+            reportRefusal();
+            return;
+        }
+        QMimeData *mime = QPlainTextEdit::createMimeDataFromSelection();
+        copiedSource_.text = mime->text();
+        copiedSource_.region = protectedRegionAt(selection.selectionStart(), protectedSpans());
+        copiedSource_.context = protectionContext_;
+        QApplication::clipboard()->setMimeData(mime);
+    }
+
+    void rememberPrimarySelection()
+    {
+        if (protectedTokens_.isEmpty()) {
+            return;
+        }
+        const QTextCursor selection = textCursor();
+        if (!selection.hasSelection()) {
+            return;
+        }
+        QMimeData *mime = QPlainTextEdit::createMimeDataFromSelection();
+        primarySelection_.context = protectionContext_;
+        primarySelection_.text = mime->text();
+        primarySelection_.region = selectionTouchesProtected(selection)
+                                      ? -1
+                                      : protectedRegionAt(selection.selectionStart(),
+                                                          protectedSpans());
+        delete mime;
+    }
+
+    void cutSelectionForProtectedContent()
+    {
+        const QTextCursor selection = textCursor();
+        if (selectionTouchesProtected(selection)) {
+            reportRefusal();
+            return;
+        }
+        const int sourceRegion = protectedRegionAt(selection.selectionStart(), protectedSpans());
+        QPlainTextEdit::cut();
+        copiedSource_.text = QApplication::clipboard()->text();
+        copiedSource_.region = sourceRegion;
+        copiedSource_.context = protectionContext_;
+    }
+
+    bool pasteCrossesProtectedContent(const QMimeData *source, int destination) const
+    {
+        const int destinationRegion = protectedRegionAt(destination, protectedSpans());
+        if (copiedSource_.context == protectionContext_ && !copiedSource_.context.isEmpty() &&
+            source->text() == copiedSource_.text && copiedSource_.region >= 0 &&
+            copiedSource_.region != destinationRegion) {
+            return true;
+        }
+        QClipboard *clipboard = QApplication::clipboard();
+        if (!clipboard->supportsSelection()) {
+            return false;
+        }
+        const QMimeData *primary = clipboard->mimeData(QClipboard::Selection);
+        if (!primary || primary->text() != source->text() ||
+            primarySelection_.context != protectionContext_ ||
+            primarySelection_.text != source->text()) {
+            return false;
+        }
+        return primarySelection_.region < 0 ||
+               primarySelection_.region != destinationRegion;
+    }
+
     bool selectionTouchesProtected(const QTextCursor &cursor) const
     {
         if (!cursor.hasSelection()) {
@@ -335,11 +497,8 @@ private:
         }
         const int selectionStart = cursor.selectionStart();
         const int selectionEnd = cursor.selectionEnd();
-        const QString text = toPlainText();
-        for (const QString &token : protectedTokens_) {
-            const int start = text.indexOf(token);
-            if (start >= 0 && selectionStart < start + token.size() &&
-                selectionEnd > start) {
+        for (const ProtectedSpan &span : protectedSpans()) {
+            if (selectionStart < span.end && selectionEnd > span.start) {
                 return true;
             }
         }
@@ -348,10 +507,8 @@ private:
 
     bool cursorInsideProtected(int position) const
     {
-        const QString text = toPlainText();
-        for (const QString &token : protectedTokens_) {
-            const int start = text.indexOf(token);
-            if (start >= 0 && position > start && position < start + token.size()) {
+        for (const ProtectedSpan &span : protectedSpans()) {
+            if (position > span.start && position < span.end) {
                 return true;
             }
         }
@@ -360,12 +517,9 @@ private:
 
     bool deletesProtected(int position, bool backward) const
     {
-        const QString text = toPlainText();
-        for (const QString &token : protectedTokens_) {
-            const int start = text.indexOf(token);
-            const int end = start + token.size();
-            if (start >= 0 && (backward ? position > start && position <= end
-                                        : position >= start && position < end)) {
+        for (const ProtectedSpan &span : protectedSpans()) {
+            if (backward ? position > span.start && position <= span.end
+                         : position >= span.start && position < span.end) {
                 return true;
             }
         }
@@ -379,15 +533,9 @@ private:
         }
         const int selectionStart = selection.selectionStart();
         const int selectionEnd = selection.selectionEnd();
-        const QString text = toPlainText();
-        for (const QString &token : protectedTokens_) {
-            const int start = text.indexOf(token);
-            if (start < 0) {
-                continue;
-            }
-            const int end = start + token.size();
-            if ((selectionEnd <= start && dropPosition >= end) ||
-                (selectionStart >= end && dropPosition <= start)) {
+        for (const ProtectedSpan &span : protectedSpans()) {
+            if ((selectionEnd <= span.start && dropPosition >= span.end) ||
+                (selectionStart >= span.end && dropPosition <= span.start)) {
                 return true;
             }
         }
@@ -402,6 +550,9 @@ private:
     }
 
     QStringList protectedTokens_;
+    QString protectionContext_;
+    ClipboardProvenance copiedSource_;
+    ClipboardProvenance primarySelection_;
     std::function<void()> refusalHandler_;
 };
 
@@ -534,9 +685,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
     static_cast<ProtectedChapterEditor *>(chapterEditor_)->setRefusalHandler([this] {
         const QString message = QStringLiteral(
-            "Edit refused because it crosses protected legacy content. Protected source and linked records remain unchanged.");
+            "Edit refused because protected legacy content could change. Protected source and linked records remain unchanged.");
         updateEditorState(message);
-        statusBar()->showMessage(QStringLiteral("Edit refused; protected content is unchanged"));
     });
     editorLayout->addWidget(chapterEditor_, 1);
     chromeHoverFilter_ = new HoverFadeFilter(editorChrome_, editorChrome_);
@@ -556,7 +706,6 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             chapterEditor_->setPlainText(lastValidEditorText_);
             loadingChapter_ = false;
             updateEditorState(validationError);
-            statusBar()->showMessage(QStringLiteral("Edit refused; protected content is unchanged"));
             return;
         }
         lastValidEditorText_ = editedText;

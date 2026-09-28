@@ -1,6 +1,7 @@
 #include "library_window.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -397,6 +398,116 @@ private slots:
         QFile unchangedStickies(QDir(library.path()).filePath("book-1/stickies.json"));
         QVERIFY(unchangedStickies.open(QIODevice::ReadOnly));
         QCOMPARE(unchangedStickies.readAll(), originalStickies);
+    }
+
+    void tracksClipboardRegionWhenMovingSafeProseAcrossProtectedContent()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        const QByteArray originalChapter(
+            "<p>Before prose.</p><div data-future=\"keep\"><span>legacy block</span></div>"
+            "<p>After prose.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(originalChapter);
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(state);
+        QVERIFY(save);
+        QVERIFY(!editor->isReadOnly());
+        const QString originalView = editor->toPlainText();
+        const int sourceStart = originalView.indexOf(QStringLiteral("Before prose."));
+        const int sourceEnd = sourceStart + QStringLiteral("Before prose.").size();
+        QVERIFY(sourceStart >= 0);
+
+        QTextCursor source(editor->document());
+        source.setPosition(sourceStart);
+        source.setPosition(sourceEnd, QTextCursor::KeepAnchor);
+        editor->setTextCursor(source);
+        QTest::keyClick(editor, Qt::Key_C, Qt::ControlModifier);
+
+        QTextCursor safeDestination(editor->document());
+        safeDestination.setPosition(sourceEnd);
+        editor->setTextCursor(safeDestination);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        QVERIFY(editor->toPlainText().contains(QStringLiteral("Before prose.Before prose.")));
+        save->click();
+        QApplication::processEvents();
+        QTextCursor cutSelection(editor->document());
+        cutSelection.setPosition(sourceStart);
+        cutSelection.setPosition(sourceEnd, QTextCursor::KeepAnchor);
+        editor->setTextCursor(cutSelection);
+        QTest::keyClick(editor, Qt::Key_X, Qt::ControlModifier);
+        QVERIFY(!editor->toPlainText().contains(QStringLiteral("Before prose.Before prose.")));
+        QVERIFY(save->isEnabled());
+        save->click();
+        QApplication::processEvents();
+        const QString beforeCrossingView = editor->toPlainText();
+        const auto beforeCrossingHashes = libraryFileHashes(library.path());
+
+        QTextCursor destination(editor->document());
+        destination.setPosition(beforeCrossingView.indexOf(QStringLiteral("After prose.")) +
+                                QStringLiteral("After prose.").size());
+        editor->setTextCursor(destination);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(editor->toPlainText(), beforeCrossingView);
+        QVERIFY(state->text().contains("refused", Qt::CaseInsensitive));
+        QVERIFY(!save->isEnabled());
+
+        QCOMPARE(editor->toPlainText(), beforeCrossingView);
+
+        QTest::qWait(900);
+        QCOMPARE(libraryFileHashes(library.path()), beforeCrossingHashes);
+    }
+
+    void refusesPrimarySelectionPasteAcrossProtectedContent()
+    {
+        if (!QApplication::clipboard()->supportsSelection()) {
+            QSKIP("This platform has no primary-selection clipboard.");
+        }
+
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+
+        const QByteArray originalChapter(
+            "<p>Before prose.</p><div data-future=\"keep\"><span>legacy block</span></div>"
+            "<p>After prose.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(originalChapter);
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        QVERIFY(editor);
+        QVERIFY(state);
+        const QString originalView = editor->toPlainText();
+        const int sourceStart = originalView.indexOf(QStringLiteral("Before prose."));
+        const int sourceEnd = sourceStart + QStringLiteral("Before prose.").size();
+        QTextCursor source(editor->document());
+        source.setPosition(sourceStart);
+        source.setPosition(sourceEnd, QTextCursor::KeepAnchor);
+        editor->setTextCursor(source);
+        QApplication::clipboard()->setText(QStringLiteral("Before prose."), QClipboard::Selection);
+
+        QTextCursor destination(editor->document());
+        destination.setPosition(originalView.indexOf(QStringLiteral("After prose.")) +
+                                QStringLiteral("After prose.").size());
+        editor->setTextCursor(destination);
+        QTest::mouseClick(editor, Qt::MiddleButton, Qt::NoModifier,
+                          editor->cursorRect(destination).center());
+
+        QCOMPARE(editor->toPlainText(), originalView);
+        QVERIFY(state->text().contains("refused", Qt::CaseInsensitive));
     }
 
     void keepsValidSectionAndDarlingLinksProtectedDuringSafeEdit()

@@ -22,15 +22,17 @@ struct LegacyChapterFragment {
     QString rawSource;
 };
 
+struct LegacyChapterRecordLinks {
+    QSet<QString> ids;
+    QHash<QString, QString> chapterIds;
+    QString readError;
+};
+
 struct LegacyChapterLinkContext {
     QString chapterId;
-    QSet<QString> stickyIds;
-    QHash<QString, QString> stickyChapterIds;
-    QSet<QString> darlingIds;
-    QHash<QString, QString> darlingChapterIds;
+    LegacyChapterRecordLinks stickies;
+    LegacyChapterRecordLinks darlings;
     QSet<QString> sectionIds;
-    QString stickyReadError;
-    QString darlingReadError;
     QString sectionReadError;
 };
 
