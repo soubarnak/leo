@@ -252,6 +252,10 @@ LibraryReadResult LibraryReader::read(const QString &path)
     }
 
     const QString root = rootInfo.absoluteFilePath();
+    if (!rootInfo.isReadable()) {
+        result.error = QStringLiteral("Cannot read Library folder: %1").arg(root);
+        return result;
+    }
     const QString libraryPath = QDir(root).filePath(QStringLiteral("library.json"));
     QJsonObject libraryObject;
     if (!readObject(libraryPath, QStringLiteral("Library metadata"), &libraryObject,
@@ -360,15 +364,15 @@ LibraryReadResult LibraryReader::read(const QString &path)
     const QFileInfoList entries = rootDirectory.entryInfoList(
         QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name);
     for (const QFileInfo &entry : entries) {
-        const QString metadataPath = QDir(entry.absoluteFilePath()).filePath(QStringLiteral("book.json"));
-        if (!QFileInfo(metadataPath).exists()) {
-            continue;
-        }
-
         const QString id = entry.fileName();
         if (memberships.contains(id)) {
             continue;
         }
+        const QString metadataPath = QDir(entry.absoluteFilePath()).filePath(QStringLiteral("book.json"));
+        if (!id.startsWith(QStringLiteral("book-")) && !QFileInfo(metadataPath).exists()) {
+            continue;
+        }
+
         Book book;
         if (loadedBooks.contains(id)) {
             book = loadedBooks.value(id);

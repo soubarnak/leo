@@ -3,7 +3,6 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
-#include <QFileDialog>
 #include <QGuiApplication>
 
 #include <memory>
@@ -60,9 +59,7 @@ int main(int argc, char *argv[])
         if (QDir(defaultPath).exists()) {
             path = defaultPath;
         } else {
-            path = QFileDialog::getExistingDirectory(
-                nullptr, QStringLiteral("Open existing NEO Library"), defaultPath,
-                QFileDialog::ShowDirsOnly);
+            path = LibraryWindow::selectLibraryDirectory(nullptr, defaultPath);
             if (path.isEmpty()) {
                 return 0;
             }

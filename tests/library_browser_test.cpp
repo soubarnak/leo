@@ -167,6 +167,24 @@ private slots:
         QVERIFY(refusal->text().contains("JSON"));
         QVERIFY(tree->isHidden());
     }
+
+    void refusesUnfiledBookWithoutMetadata()
+    {
+        QTemporaryDir library;
+        QVERIFY(library.isValid());
+        writeFile(QDir(library.path()).filePath("library.json"),
+                  QByteArray(R"json({"authors":[{"id":"a1","name":"Ada"}],"shelves":[]})json"));
+        QVERIFY(QDir().mkpath(QDir(library.path()).filePath("book-orphan")));
+
+        LibraryWindow window;
+        QVERIFY(!window.openLibrary(library.path()));
+        window.show();
+        QApplication::processEvents();
+        auto *refusal = window.findChild<QLabel *>("library-refusal");
+        QVERIFY(refusal);
+        QVERIFY(refusal->isVisible());
+        QVERIFY(refusal->text().contains("book.json"));
+    }
 };
 
 QTEST_MAIN(LibraryBrowserTest)

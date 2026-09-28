@@ -91,6 +91,13 @@ QString LibraryWindow::defaultLibraryPath()
     return QDir(documentsPath).filePath(QStringLiteral("NEO Library"));
 }
 
+QString LibraryWindow::selectLibraryDirectory(QWidget *parent, const QString &startingPath)
+{
+    return QFileDialog::getExistingDirectory(
+        parent, QStringLiteral("Open existing NEO Library"), startingPath,
+        QFileDialog::ShowDirsOnly);
+}
+
 bool LibraryWindow::openLibrary(const QString &path)
 {
     const LibraryReadResult result = LibraryReader::read(path);
@@ -129,9 +136,7 @@ bool LibraryWindow::openLibrary(const QString &path)
 
 void LibraryWindow::chooseLibrary()
 {
-    const QString path = QFileDialog::getExistingDirectory(
-        this, QStringLiteral("Open existing NEO Library"), defaultPath_,
-        QFileDialog::ShowDirsOnly);
+    const QString path = selectLibraryDirectory(this, defaultPath_);
     if (!path.isEmpty()) {
         openLibrary(path);
     }
