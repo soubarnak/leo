@@ -34,13 +34,28 @@ jobs:
           test -n "$current_version"
           if [ "$current_version" = "$previous_version" ]; then
             changed=false
+            previous_ref=HEAD^
+            for candidate in $(git rev-list --first-parent HEAD^); do
+              if ! git cat-file -e "$candidate:debian/changelog" 2>/dev/null; then
+                continue
+              fi
+              candidate_version=$(git show "$candidate:debian/changelog" | sed -n '1s/^[^ ]* (\([^)]*\)).*/\1/p')
+              if [ -n "$candidate_version" ] && dpkg --compare-versions "$candidate_version" lt "$current_version"; then
+                previous_version=$candidate_version
+                previous_ref=$candidate
+                changed=true
+                break
+              fi
+            done
           elif dpkg --compare-versions "$current_version" gt "$previous_version"; then
             changed=true
+            previous_ref=HEAD^
           else
             printf 'Package version %s is not newer than %s.\n' "$current_version" "$previous_version" >&2
             exit 1
           fi
           echo "previous=$previous_version" >> "$GITHUB_OUTPUT"
+          echo "previous_ref=$previous_ref" >> "$GITHUB_OUTPUT"
           echo "current=$current_version" >> "$GITHUB_OUTPUT"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
@@ -66,11 +81,12 @@ jobs:
         if: steps.versions.outputs.changed == 'true'
         env:
           PREVIOUS_VERSION: ${{ steps.versions.outputs.previous }}
+          PREVIOUS_REF: ${{ steps.versions.outputs.previous_ref }}
         run: |
           set -eu
           workspace="$RUNNER_TEMP/leo-package-lifecycle"
           mkdir -p "$workspace/previous"
-          git archive HEAD^ | tar -x -C "$workspace/previous"
+          git archive "$PREVIOUS_REF" | tar -x -C "$workspace/previous"
           (cd "$workspace/previous" && dpkg-buildpackage -us -uc -b)
           test -f "$workspace/leo-writer_${PREVIOUS_VERSION}_amd64.deb"
 
