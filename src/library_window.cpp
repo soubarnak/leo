@@ -1,10 +1,16 @@
 #include "library_window.h"
 
+#include "app_paths.h"
 #include "library_reader.h"
+#include "release_check_dialog.h"
 
 #include <QAction>
+#include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
@@ -14,6 +20,7 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTreeWidget>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
@@ -80,6 +87,24 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     QAction *quitAction = fileMenu->addAction(QStringLiteral("E&xit"));
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
+
+    QMenu *helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
+    QAction *updatesAction = helpMenu->addAction(QStringLiteral("Check for Updates…"));
+    connect(updatesAction, &QAction::triggered, this, [this] {
+        auto *dialog = new ReleaseCheckDialog(QCoreApplication::applicationVersion(), this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    });
+    QAction *errorLogAction = helpMenu->addAction(QStringLiteral("Open Error Log"));
+    connect(errorLogAction, &QAction::triggered, this, [] {
+        const QString logPath = AppPaths::logFilePath();
+        QDir().mkpath(QFileInfo(logPath).absolutePath());
+        QFile log(logPath);
+        if (!log.exists() && log.open(QIODevice::WriteOnly)) {
+            log.close();
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
+    });
 }
 
 QString LibraryWindow::defaultLibraryPath()
@@ -103,6 +128,7 @@ bool LibraryWindow::openLibrary(const QString &path)
     const LibraryReadResult result = LibraryReader::read(path);
     tree_->clear();
     if (!result.ok()) {
+        qWarning().noquote() << "Library open refused:" << result.error;
         refusal_->setText(QStringLiteral(
             "LEO refused to open this Library.\n\n%1\n\nNo Library files were changed.")
                               .arg(result.error));

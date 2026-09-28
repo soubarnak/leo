@@ -29,4 +29,4 @@ Books are folders of plain files in `~/Documents/NEO Library`: `book.json` for m
 - Run from source: `npm install && npm start` (needs Node.js).
 - Keep PRs focused — one feature or fix each.
 - Describe the writer-facing behavior in your PR, not just the code. Think like an author, not a programmer!
-- Bug reports: please include your OS, what you did, what happened, and the tail of `~/Documents/NEO Library/neo-errors.log` if it's a crash.
+- Bug reports: include your OS, what you did, and what happened. For native Debian LEO, attach `~/.local/state/leo-writer/leo-writer.log` (or `$XDG_STATE_HOME/leo-writer/leo-writer.log`); open it from the Help menu using Open Error Log. For the legacy NEO desktop app, attach `~/Documents/NEO Library/neo-errors.log`.

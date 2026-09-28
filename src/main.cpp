@@ -1,4 +1,6 @@
+#include "error_log.h"
 #include "library_window.h"
+#include "single_instance.h"
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -34,14 +36,15 @@ int main(int argc, char *argv[])
         QGuiApplication::setDesktopFileName(QStringLiteral("io.github.soubarnak.LeoWriter"));
     }
 
-    QCoreApplication::setApplicationName(
-        commandLineQuery ? QStringLiteral("LEO")
-                         : QStringLiteral("io.github.soubarnak.LeoWriter"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QCoreApplication::setApplicationName(QStringLiteral("leo-writer"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(LEO_VERSION));
     QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.soubarnak"));
+    if (!commandLineQuery) {
+        ErrorLog::install();
+    }
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Browse an existing NEO Library."));
+    parser.setApplicationDescription(QStringLiteral("Browse an existing NEO Library in LEO."));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("library"),
@@ -56,7 +59,30 @@ int main(int argc, char *argv[])
     const QStringList arguments = parser.positionalArguments();
     if (!arguments.isEmpty()) {
         path = arguments.first();
-    } else {
+    }
+
+    LibraryWindow window;
+    SingleInstance instance;
+    QString instanceError;
+    const SingleInstance::StartResult startResult = instance.acquireOrForward(path, &instanceError);
+    if (startResult == SingleInstance::StartResult::AlreadyRunning) {
+        return 0;
+    }
+    if (startResult == SingleInstance::StartResult::Failed) {
+        qCritical("Could not start the single LEO instance: %s", qPrintable(instanceError));
+        return 1;
+    }
+    QObject::connect(&instance, &SingleInstance::activationRequested, &window,
+                     [&window](const QString &requestedPath) {
+                         if (!requestedPath.isEmpty()) {
+                             window.openLibrary(requestedPath);
+                         }
+                         window.showNormal();
+                         window.raise();
+                         window.activateWindow();
+                     });
+
+    if (path.isEmpty()) {
         const QString defaultPath = LibraryWindow::defaultLibraryPath();
         if (QDir(defaultPath).exists()) {
             path = defaultPath;
@@ -68,7 +94,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    LibraryWindow window;
     window.openLibrary(path);
     window.show();
     return application->exec();

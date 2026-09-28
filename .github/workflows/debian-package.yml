@@ -1,0 +1,82 @@
+name: Debian package lifecycle
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  package-lifecycle:
+    runs-on: ubuntu-latest
+    container: debian:trixie-slim
+    steps:
+      - name: Install checkout prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y bash ca-certificates git
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare package versions
+        id: versions
+        run: |
+          set -eu
+          previous_version=$(git show HEAD^:debian/changelog | sed -n '1s/^[^ ]* (\([^)]*\)).*/\1/p')
+          current_version=$(sed -n '1s/^[^ ]* (\([^)]*\)).*/\1/p' debian/changelog)
+          test -n "$previous_version"
+          test -n "$current_version"
+          if [ "$current_version" = "$previous_version" ]; then
+            changed=false
+          elif dpkg --compare-versions "$current_version" gt "$previous_version"; then
+            changed=true
+          else
+            printf 'Package version %s is not newer than %s.\n' "$current_version" "$previous_version" >&2
+            exit 1
+          fi
+          echo "previous=$previous_version" >> "$GITHUB_OUTPUT"
+          echo "current=$current_version" >> "$GITHUB_OUTPUT"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Install Debian build and package tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential debhelper desktop-file-utils fakeroot \
+            libwww-dict-leo-org-perl qt6-base-dev qt6-qpa-plugins
+
+      - name: Build current Debian package
+        env:
+          CURRENT_VERSION: ${{ steps.versions.outputs.current }}
+        run: |
+          set -eu
+          workspace="$RUNNER_TEMP/leo-package-lifecycle"
+          mkdir -p "$workspace/current"
+          git archive HEAD | tar -x -C "$workspace/current"
+          (cd "$workspace/current" && dpkg-buildpackage -us -uc -b)
+          test -f "$workspace/leo-writer_${CURRENT_VERSION}_amd64.deb"
+
+      - name: Build previous Debian package
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          PREVIOUS_VERSION: ${{ steps.versions.outputs.previous }}
+        run: |
+          set -eu
+          workspace="$RUNNER_TEMP/leo-package-lifecycle"
+          mkdir -p "$workspace/previous"
+          git archive HEAD^ | tar -x -C "$workspace/previous"
+          (cd "$workspace/previous" && dpkg-buildpackage -us -uc -b)
+          test -f "$workspace/leo-writer_${PREVIOUS_VERSION}_amd64.deb"
+
+      - name: Verify clean install, APT upgrade, removal, and reinstall
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          PREVIOUS_VERSION: ${{ steps.versions.outputs.previous }}
+          CURRENT_VERSION: ${{ steps.versions.outputs.current }}
+        run: |
+          LEO_PACKAGE_TEST_SANDBOX=1 sh tests/debian_package_lifecycle.sh \
+            "$RUNNER_TEMP/leo-package-lifecycle/leo-writer_${PREVIOUS_VERSION}_amd64.deb" \
+            "$RUNNER_TEMP/leo-package-lifecycle/leo-writer_${CURRENT_VERSION}_amd64.deb"

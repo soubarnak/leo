@@ -1,0 +1,36 @@
+.TH LEO-WRITER 1 "September 2026" "leo-writer 0.2.0" "User Commands"
+.SH NAME
+leo-writer \- browse an existing NEO Library with LEO
+.SH SYNOPSIS
+.B leo-writer
+.RI [ library ]
+.SH DESCRIPTION
+LEO opens an existing NEO Library in a native desktop window. The Library is
+read-only in this release. Opening it does not convert or write Library files.
+.PP
+If no path is given, LEO opens the user's
+.I Documents/NEO Library
+when it exists. Otherwise, LEO asks the user to choose a Library directory.
+.PP
+Repeated launches reuse the running LEO process when desktop IPC is available.
+.SH OPTIONS
+.TP
+.BR \-h , \-\-help
+Show command-line help and exit.
+.TP
+.BR \-v , \-\-version
+Show the installed version and exit.
+.SH FILES
+.TP
+.I ~/.local/state/leo-writer/leo-writer.log
+Application error log when \fBXDG_STATE_HOME\fR is unset. The Help menu opens
+the log in the desktop's default text viewer.
+.TP
+.I $XDG_STATE_HOME/leo-writer/leo-writer.log
+Application error log when \fBXDG_STATE_HOME\fR is set to an absolute path.
+.SH UPDATES
+The Help menu checks GitHub Releases for the latest LEO version. It does not
+download or install packages. Download the Debian package from the release page,
+then install or upgrade it with \fBapt install ./leo-writer_<version>_amd64.deb\fR.
+.SH SEE ALSO
+Project releases: https://github.com/soubarnak/leo/releases
