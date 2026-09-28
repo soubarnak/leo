@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>LEO legacy chapter safety — decision prototype</title>
+<style>
+  :root { font: 16px/1.45 system-ui, sans-serif; color: #24211e; background: #f7f5f0; }
+  body { max-width: 1050px; margin: 32px auto; padding: 0 20px; }
+  h1 { font-size: 1.65rem; margin-bottom: .25rem; }
+  h2 { font-size: 1.15rem; margin: 0 0 .5rem; }
+  p { margin: .4rem 0 1rem; }
+  button { font: inherit; padding: .55rem .85rem; border: 1px solid #b2a99b; border-radius: 5px; background: white; cursor: pointer; }
+  button[aria-pressed="true"] { background: #175d51; border-color: #175d51; color: white; }
+  button:hover { border-color: #175d51; }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; margin: .6rem 0 1.2rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: white; border: 1px solid #ddd5c9; border-radius: 8px; padding: 18px; margin: 16px 0; }
+  .wide { grid-column: 1 / -1; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #f2efe9; border-radius: 5px; min-height: 46px; }
+  .small { color: #615a50; font-size: .9rem; }
+  .status { font-weight: 650; color: #175d51; }
+  .alert { color: #8c3424; }
+  ol { padding-left: 1.4rem; }
+  @media (max-width: 650px) { .grid { display: block; } }
+</style>
+<body>
+<h1>Legacy chapter safety</h1>
+<p>Decision prototype for <a href="https://github.com/soubarnak/leo/issues/11">Set legacy document codec and unsupported-markup policy</a>. Which editing policy protects old chapter HTML while letting a writer continue?</p>
+<p class="small">Throwaway policy simulation. Fixtures resemble NEO chapter shapes; this page does not parse or save real libraries. All state stays in memory. “Opaque protection” is a proposed contract, not a proven codec.</p>
+<div class="card">
+  <h2>Choose a chapter shape</h2><div class="row" id="scenarios"></div>
+  <p id="scenario-note"></p>
+  <h2>Choose a policy</h2><div class="row" id="policies"></div>
+  <p id="policy-note"></p>
+</div>
+<div class="card">
+  <h2>Try actions</h2>
+  <p class="small">Each action starts from current state. Change chapter shape or policy to reset.</p>
+  <div class="row">
+    <button data-action="outside">Edit safe prose</button>
+    <button data-action="cross">Replace selection across special content</button>
+    <button data-action="copy">Copy special content into another chapter</button>
+    <button data-action="repair">Make inspection copy</button>
+    <button data-action="reset">Reset</button>
+  </div>
+  <h2>Guided cases</h2>
+  <ol>
+    <li>Choose <strong>Nested unknown span</strong> and <strong>Guarded editing</strong>. Edit safe prose, then try replacing across span.</li>
+    <li>Choose <strong>Orphan sticky</strong>. Try any edit, then make inspection copy.</li>
+    <li>Choose <strong>Nested unknown span</strong> and <strong>Unrestricted conversion</strong>. Replace across span; inspect lost source.</li>
+  </ol>
+</div>
+<div class="grid">
+  <div class="card"><h2>Writer sees</h2><p id="writer" class="status"></p><p id="message"></p><h2>Action history</h2><pre id="history"></pre></div>
+  <div class="card"><h2>Metadata state</h2><pre id="metadata"></pre><p class="small">Special content includes unknown markup or domain links. Unknown JSON fields stay attached to original source.</p></div>
+  <div class="card"><h2>Original source, unchanged</h2><pre id="source"></pre></div>
+  <div class="card"><h2>Working chapter</h2><pre id="working"></pre></div>
+  <div class="card wide"><h2>Separate inspection copy</h2><pre id="repair-copy"></pre><p class="small">Inspection copy is never written over original. Writer must review missing formatting and links before choosing to use it.</p></div>
+</div>
+<script>
+// Portable decision model. This models policy effects, not an HTML codec.
+const scenarios = {
+  inline: {
+    name: 'Nested unknown span',
+    note: 'Attributed span contains bold text. Current Qt fixture codec refuses this nesting.',
+    html: '<p>Before <span data-revision="draft"><b>unknown</b></span> after.</p>',
+    repair: '<p>Before <b>unknown</b> after.</p>',
+    metadata: 'Unknown data-revision=draft on nested span',
+    semanticConflict: false
+  },
+  block: {
+    name: 'Unknown block',
+    note: 'Plugin block sits between prose paragraphs. Its bytes and placement matter.',
+    html: '<p>Before.</p><aside data-plugin="old">Archived note</aside><p>After.</p>',
+    repair: '<p>Before.</p><p>Archived note</p><p>After.</p>',
+    metadata: 'Unknown aside with data-plugin=old',
+    semanticConflict: false
+  },
+  sticky: {
+    name: 'Orphan sticky',
+    note: 'Marker refers to a sticky record missing from stickies.json. Text alone cannot repair the link.',
+    html: '<p>Before <span class="ph-mark" data-sid="s-missing" contenteditable="false">⚑</span> after.</p>',
+    repair: '<p>Before [sticky requires review] after.</p>',
+    metadata: 'Missing sticky record for s-missing',
+    semanticConflict: true
+  },
+  ghost: {
+    name: 'Unmatched section',
+    note: 'Ghost prompt names a section absent from book metadata. Its ownership is unresolved.',
+    html: '<p>Before.</p><p class="ghost" data-sec-id="sec-missing">Prompt.</p>',
+    repair: '<p>Before.</p><p>Prompt.</p>',
+    metadata: 'Missing sectionNotes entry for sec-missing',
+    semanticConflict: true
+  }
+};
+const policies = {
+  strict: {name: 'Whole chapter read-only', note: 'Any unsupported shape blocks chapter edits. Writer can inspect source and create a separate review copy.'},
+  guarded: {name: 'Guarded editing', note: 'Unknown fragments remain protected. Edits outside them work; crossing edits stop. Broken semantic links keep the chapter read-only.'},
+  unsafe: {name: 'Unrestricted conversion', note: 'Editor allows edits everywhere. Crossing unsupported content can silently discard bytes or identity. Shown as a negative control.'}
+};
+function initial(scenario, policy) {
+  const fixture = scenarios[scenario];
+  return {scenario, policy, source: fixture.html, working: fixture.html,
+    inspectionCopy: '', history: [], message: 'Open chapter to inspect.', lost: false};
+}
+function canEdit(state) {
+  return state.policy === 'unsafe' ||
+    (state.policy === 'guarded' && !scenarios[state.scenario].semanticConflict);
+}
+function step(state, action) {
+  if (action === 'reset') return initial(state.scenario, state.policy);
+  const next = {...state, history: [...state.history]};
+  if (action === 'repair') {
+    next.inspectionCopy = scenarios[state.scenario].repair;
+    next.message = 'Separate inspection copy created. Original source remains unchanged.';
+  } else if (!canEdit(state)) {
+    next.message = 'Edit refused. Original source remains available; inspect or repair a separate copy.';
+  } else if (state.policy === 'guarded' && action !== 'outside') {
+    next.message = 'Edit refused because selection touches protected content. No bytes changed.';
+  } else if (action === 'outside') {
+    next.working = next.working.replace('Before', 'Revised before');
+    next.message = 'Prose outside special content changed. Original source remains unchanged.';
+  } else {
+    next.working = '<p>Replaced passage.</p>';
+    next.lost = true;
+    next.message = 'Special content lost in this unsafe model. This outcome is unacceptable.';
+  }
+  next.history.push(action + ': ' + next.message);
+  return next;
+}
+</script>
+<script>
+let state = initial('inline', 'guarded');
+function button(parent, key, name, selected, onClick) {
+  const b = document.createElement('button');
+  b.textContent = name; b.setAttribute('aria-pressed', String(selected));
+  b.onclick = onClick; parent.appendChild(b);
+}
+function render() {
+  const s = scenarios[state.scenario];
+  const sc = document.getElementById('scenarios'); sc.replaceChildren();
+  Object.entries(scenarios).forEach(([key, value]) => button(sc, key, value.name, key === state.scenario,
+    () => {state = initial(key, state.policy); render();}));
+  const po = document.getElementById('policies'); po.replaceChildren();
+  Object.entries(policies).forEach(([key, value]) => button(po, key, value.name, key === state.policy,
+    () => {state = initial(state.scenario, key); render();}));
+  document.getElementById('scenario-note').textContent = s.note;
+  document.getElementById('policy-note').textContent = policies[state.policy].note;
+  const editable = canEdit(state);
+  const writer = document.getElementById('writer');
+  writer.textContent = editable ? 'Editor open with visible limits' : 'Read-only chapter';
+  writer.className = 'status' + (state.lost ? ' alert' : '');
+  document.getElementById('message').textContent = state.message;
+  document.getElementById('history').textContent = state.history.join('\n') || 'No actions yet.';
+  document.getElementById('metadata').textContent = s.metadata + '\n' +
+    (state.lost ? 'LOST by crossing edit' : 'Present in original source');
+  document.getElementById('source').textContent = state.source;
+  document.getElementById('working').textContent = state.working;
+  document.getElementById('repair-copy').textContent = state.inspectionCopy || 'None.';
+}
+document.querySelectorAll('[data-action]').forEach(b => b.onclick = () => {
+  state = step(state, b.dataset.action); render();
+});
+render();
+</script>
+</body>
+</html>
