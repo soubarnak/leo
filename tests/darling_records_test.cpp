@@ -123,6 +123,25 @@ private slots:
         QCOMPARE(readFile(chapterPath), bytes);
     }
 
+    void deletionRefusesUnopenableDarlings()
+    {
+        QTemporaryDir library;
+        QVERIFY(library.isValid());
+        makeBook(library.path());
+        const QString chapterPath = library.path() + QStringLiteral("/book-1/chapters/a.html");
+        const QByteArray original = readFile(chapterPath);
+        const QString darlingsPath = library.path() + QStringLiteral("/book-1/darlings.json");
+        const QByteArray malformed = QByteArrayLiteral(R"([{"id":"same"},{"id":"same"}])");
+        writeFile(darlingsPath, malformed);
+        ChapterStructure structure(library.path(), QStringLiteral("book-1"));
+        QString error;
+        QVERIFY2(structure.load(&error), qPrintable(error));
+        QVERIFY(!structure.deleteChapter(QStringLiteral("a"),
+            {original, LibraryPersistence::hash(original), original}).ok);
+        QCOMPARE(readFile(chapterPath), original);
+        QCOMPARE(readFile(darlingsPath), malformed);
+    }
+
     void deletedChapterRestoreRequiresReviewAndCannotBeUndoneTwice()
     {
         QTemporaryDir library;

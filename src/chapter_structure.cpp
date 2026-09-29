@@ -1,4 +1,5 @@
 #include "chapter_structure.h"
+#include "darling_records.h"
 
 #include <QDir>
 #include <QDateTime>
@@ -704,11 +705,9 @@ ChapterStructureResult ChapterStructure::deleteChapter(
         QByteArray darlingsBytes;
         if (!LibraryPersistence::readLibraryFile(libraryPath_, darlingsPath,
                                                  &darlingsBytes, &error)) return fail(error);
-        QJsonParseError parseError;
-        const QJsonDocument parsed = QJsonDocument::fromJson(darlingsBytes, &parseError);
-        if (parseError.error != QJsonParseError::NoError || !parsed.isArray())
+        QJsonArray records;
+        if (!DarlingRecords(libraryPath_, bookId_).list(&records, &error))
             return fail(QStringLiteral("Darlings could not be verified; chapter deletion was refused."));
-        QJsonArray records = parsed.array();
         QJsonObject darling;
         darling.insert(QStringLiteral("id"), QStringLiteral("d-") +
             QUuid::createUuid().toString(QUuid::WithoutBraces));
