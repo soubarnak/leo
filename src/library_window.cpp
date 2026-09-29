@@ -47,6 +47,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -58,6 +59,7 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QUrl>
@@ -499,9 +501,25 @@ public:
         refusalHandler_ = std::move(handler);
     }
 
+    void setPasteRefusalHandler(std::function<void()> handler)
+    {
+        pasteRefusalHandler_ = std::move(handler);
+    }
+
+    void setPasteCleanedHandler(std::function<void()> handler)
+    {
+        pasteCleanedHandler_ = std::move(handler);
+    }
+
     void setSplitHandler(SplitHandler handler)
     {
         splitHandler_ = std::move(handler);
+    }
+
+    bool canFormatSelection() const
+    {
+        return !isReadOnly() && !selectionTouchesProtected(textCursor()) &&
+               !cursorInsideProtected(textCursor().position());
     }
 
 protected:
@@ -581,6 +599,38 @@ protected:
         if (plainEnter) {
             enterRun_ = (enterRun_ >= 2) ? 0 : enterRun_ + 1;
         }
+        if (!cursor.hasSelection() && !(event->modifiers() &
+            (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) &&
+            !cursorInsideProtected(cursor.position())) {
+            const QString typed = event->text();
+            const QString before = cursor.block().text().left(cursor.positionInBlock());
+            QString replacement;
+            int remove = 0;
+            if (typed == QStringLiteral("-") && before.endsWith(QLatin1Char('-'))) {
+                replacement = QString(QChar(0x2014));
+                remove = 1;
+            } else if (typed == QStringLiteral(".") && before.endsWith(QStringLiteral(".."))) {
+                replacement = QString(QChar(0x2026));
+                remove = 2;
+            } else if (typed == QStringLiteral("\"") || typed == QStringLiteral("'")) {
+                const QChar previous = before.isEmpty() ? QChar() : before.back();
+                const bool opening = previous.isNull() || previous.isSpace() ||
+                    QStringLiteral("([{—‘“>").contains(previous);
+                replacement = typed == QStringLiteral("\"")
+                    ? QString(QChar(opening ? 0x201c : 0x201d))
+                    : QString(QChar(opening ? 0x2018 : 0x2019));
+            }
+            if (!replacement.isEmpty()) {
+                QTextCursor edit = cursor;
+                edit.beginEditBlock();
+                for (int index = 0; index < remove; ++index) edit.deletePreviousChar();
+                edit.insertText(replacement);
+                edit.endEditBlock();
+                setTextCursor(edit);
+                event->accept();
+                return;
+            }
+        }
         QPlainTextEdit::keyPressEvent(event);
     }
 
@@ -611,7 +661,64 @@ protected:
             reportRefusal();
             return;
         }
-        QPlainTextEdit::insertFromMimeData(source);
+        if (!source->hasHtml()) {
+            QPlainTextEdit::insertFromMimeData(source);
+            return;
+        }
+        static const QRegularExpression tags(
+            QStringLiteral("<\\s*/?\\s*([a-z][a-z0-9:-]*)\\b[^>]*>"),
+            QRegularExpression::CaseInsensitiveOption);
+        static const QSet<QString> safeTags = {
+            QStringLiteral("html"), QStringLiteral("head"), QStringLiteral("body"),
+            QStringLiteral("meta"), QStringLiteral("title"), QStringLiteral("style"),
+            QStringLiteral("p"), QStringLiteral("div"), QStringLiteral("span"),
+            QStringLiteral("b"), QStringLiteral("strong"), QStringLiteral("i"),
+            QStringLiteral("em"), QStringLiteral("br")};
+        auto tagsInSource = tags.globalMatch(source->html());
+        while (tagsInSource.hasNext()) {
+            const auto match = tagsInSource.next();
+            if (!safeTags.contains(match.captured(1).toLower())) {
+                if (pasteRefusalHandler_) pasteRefusalHandler_();
+                return;
+            }
+        }
+        QTextDocument pasted;
+        pasted.setHtml(source->html());
+        QTextCursor insertion = textCursor();
+        insertion.beginEditBlock();
+        bool firstBlock = true;
+        for (QTextBlock block = pasted.begin(); block.isValid(); block = block.next()) {
+            if (!firstBlock) {
+                insertion.insertBlock();
+            }
+            if (!firstBlock || insertion.block().text().isEmpty()) {
+                QTextBlockFormat blockFormat;
+                blockFormat.setAlignment(block.blockFormat().alignment());
+                insertion.mergeBlockFormat(blockFormat);
+            }
+            firstBlock = false;
+            for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment) {
+                const QTextFragment part = fragment.fragment();
+                if (!part.isValid()) continue;
+                QTextCharFormat format;
+                format.setFontWeight(part.charFormat().fontWeight() >= QFont::Bold
+                                         ? QFont::Bold : QFont::Normal);
+                format.setFontItalic(part.charFormat().fontItalic());
+                insertion.insertText(part.text(), format);
+            }
+        }
+        insertion.endEditBlock();
+        setTextCursor(insertion);
+        if (pasteCleanedHandler_) pasteCleanedHandler_();
+    }
+
+    QMimeData *createMimeDataFromSelection() const override
+    {
+        QMimeData *mime = QPlainTextEdit::createMimeDataFromSelection();
+        const QTextCursor selection = textCursor();
+        if (selectionTouchesProtected(selection)) return mime;
+        mime->setHtml(selection.selection().toHtml());
+        return mime;
     }
 
     void dropEvent(QDropEvent *event) override
@@ -690,7 +797,7 @@ private:
             reportRefusal();
             return;
         }
-        QMimeData *mime = QPlainTextEdit::createMimeDataFromSelection();
+        QMimeData *mime = createMimeDataFromSelection();
         copiedSource_.text = mime->text();
         copiedSource_.region = protectedRegionAt(selection.selectionStart(), protectedSpans());
         copiedSource_.context = protectionContext_;
@@ -817,6 +924,8 @@ private:
     ClipboardProvenance copiedSource_;
     ClipboardProvenance primarySelection_;
     std::function<void()> refusalHandler_;
+    std::function<void()> pasteRefusalHandler_;
+    std::function<void()> pasteCleanedHandler_;
     SplitHandler splitHandler_;
 };
 
@@ -1127,6 +1236,15 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             "Edit refused because protected legacy content could change. Protected source and linked records remain unchanged.");
         updateEditorState(message);
     });
+    static_cast<ProtectedChapterEditor *>(chapterEditor_)->setPasteRefusalHandler([this] {
+        updateEditorState(QStringLiteral(
+            "Paste refused because it contains content this editor cannot safely represent. "
+            "The chapter and clipboard remain unchanged."));
+    });
+    static_cast<ProtectedChapterEditor *>(chapterEditor_)->setPasteCleanedHandler([this] {
+        updateEditorState(QStringLiteral(
+            "Paste cleaned to prose, bold, italic and alignment. External IDs and other formatting were removed."));
+    });
     static_cast<ProtectedChapterEditor *>(chapterEditor_)->setSplitHandler(
         [this](const QString &text, int position) {
             splitActiveChapter(text, position, false);
@@ -1290,6 +1408,51 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     redoStructureAction_->setObjectName(QStringLiteral("chapter-structure-redo"));
     connect(redoStructureAction_, &QAction::triggered,
             this, &LibraryWindow::redoChapterStructure);
+    auto *formatMenu = menuBar()->addMenu(QStringLiteral("&Format"));
+    const auto changedFormat = [this] {
+        chapterDirty_ = true;
+        updateEditorState();
+        saveTimer_->start();
+    };
+    const auto addCharacterAction = [this, formatMenu, changedFormat](
+                                        const QString &label, const QKeySequence &shortcut,
+                                        bool bold) {
+        QAction *action = formatMenu->addAction(label);
+        action->setShortcut(shortcut);
+        connect(action, &QAction::triggered, this, [this, bold, changedFormat] {
+            auto *editor = static_cast<ProtectedChapterEditor *>(chapterEditor_);
+            if (!editor->canFormatSelection()) return;
+            QTextCursor cursor = editor->textCursor();
+            QTextCharFormat format;
+            if (bold) format.setFontWeight(cursor.charFormat().fontWeight() >= QFont::Bold
+                                               ? QFont::Normal : QFont::Bold);
+            else format.setFontItalic(!cursor.charFormat().fontItalic());
+            if (cursor.hasSelection()) cursor.mergeCharFormat(format);
+            else editor->mergeCurrentCharFormat(format);
+            changedFormat();
+        });
+    };
+    addCharacterAction(QStringLiteral("Bold"), QKeySequence::Bold, true);
+    addCharacterAction(QStringLiteral("Italic"), QKeySequence::Italic, false);
+    const auto addAlignmentAction = [this, formatMenu, changedFormat](
+                                        const QString &label, const QKeySequence &shortcut,
+                                        Qt::Alignment alignment) {
+        QAction *action = formatMenu->addAction(label);
+        action->setShortcut(shortcut);
+        connect(action, &QAction::triggered, this, [this, alignment, changedFormat] {
+            auto *editor = static_cast<ProtectedChapterEditor *>(chapterEditor_);
+            if (!editor->canFormatSelection()) return;
+            QTextCursor cursor = editor->textCursor();
+            QTextBlockFormat format;
+            format.setAlignment(alignment);
+            cursor.mergeBlockFormat(format);
+            changedFormat();
+        });
+    };
+    addAlignmentAction(QStringLiteral("Align Left"), QKeySequence(Qt::CTRL | Qt::Key_L), Qt::AlignLeft);
+    addAlignmentAction(QStringLiteral("Align Center"), QKeySequence(Qt::CTRL | Qt::Key_E), Qt::AlignHCenter);
+    addAlignmentAction(QStringLiteral("Align Right"), QKeySequence(Qt::CTRL | Qt::Key_R), Qt::AlignRight);
+    addAlignmentAction(QStringLiteral("Justify"), QKeySequence(Qt::CTRL | Qt::Key_J), Qt::AlignJustify);
     updateChapterStructureActions();
 }
 
@@ -2542,6 +2705,9 @@ bool LibraryWindow::openDocument(const QString &relativePath,
     chapterEditor_->setReadOnly(chapterReadOnly_);
     chapterEditor_->setPlainText(chapterReadOnly_ ? QString::fromUtf8(source)
                                                  : chapterDocument_.text);
+    if (!chapterReadOnly_) {
+        LegacyChapterCodec::applyFormatting(chapterDocument_, chapterEditor_->document());
+    }
     chapterEditor_->moveCursor(QTextCursor::Start);
     loadingChapter_ = false;
     lastValidEditorText_ = chapterEditor_->toPlainText();
@@ -2643,8 +2809,8 @@ bool LibraryWindow::saveCurrentChapter()
     }
 
     QString encodeError;
-    const QByteArray newBytes = LegacyChapterCodec::encode(
-        chapterDocument_, chapterEditor_->toPlainText(), &encodeError);
+    const QByteArray newBytes = LegacyChapterCodec::encodeRich(
+        chapterDocument_, chapterEditor_->document(), &encodeError);
     if (!encodeError.isEmpty()) {
         saveFailed_ = true;
         updateEditorState(encodeError);

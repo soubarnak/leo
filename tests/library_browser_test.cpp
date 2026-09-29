@@ -18,11 +18,13 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QTextCursor>
 #include <QtTest>
 
 #include <functional>
@@ -349,6 +351,185 @@ class LibraryBrowserTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void richFormattingSurvivesSaveAndReopen()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(
+            QByteArrayLiteral("<p>First words.</p><p>Next line.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        QTextCursor selection(editor->document());
+        selection.setPosition(0);
+        selection.setPosition(5, QTextCursor::KeepAnchor);
+        editor->setTextCursor(selection);
+        QAction *bold = nullptr;
+        QAction *center = nullptr;
+        for (QAction *action : window.findChildren<QAction *>()) {
+            if (action->text() == QStringLiteral("Bold")) bold = action;
+            if (action->text() == QStringLiteral("Align Center")) center = action;
+        }
+        QVERIFY(bold);
+        QVERIFY(center);
+        bold->trigger();
+        center->trigger();
+        save->click();
+        const QString chapterPath = QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html"));
+        const QByteArray saved = readFile(chapterPath);
+        QVERIFY(saved.contains("<b>First</b>"));
+        QVERIFY(saved.contains("text-align:center"));
+        LibraryWindow reopened;
+        QVERIFY(reopened.openLibrary(library.path()));
+        openSingleChapter(&reopened);
+        auto *reopenedEditor = reopened.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(reopenedEditor);
+        QCOMPARE(reopenedEditor->toPlainText(), QStringLiteral("First words.\nNext line."));
+        QTextCursor character(reopenedEditor->document());
+        character.setPosition(0);
+        character.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        QVERIFY(character.charFormat().fontWeight() >= QFont::Bold);
+        QCOMPARE(character.blockFormat().alignment(), Qt::AlignHCenter);
+    }
+
+    void externalHtmlPasteKeepsProseFormattingWithoutForeignIdentity()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Start.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        editor->moveCursor(QTextCursor::End);
+        auto *mime = new QMimeData;
+        mime->setHtml(QStringLiteral("<p id='foreign' data-sec-id='bad'>"
+                                     "<strong> Bold</strong> <em>words</em></p>"));
+        QApplication::clipboard()->setMimeData(mime);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        save->click();
+        const QByteArray saved = readFile(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY2(saved.contains("<b>Bold</b>"), saved.constData());
+        QVERIFY(saved.contains("<i>words</i>"));
+        QVERIFY(!saved.contains("foreign"));
+        QVERIFY(!saved.contains("data-sec-id"));
+    }
+
+    void internalRichCopyAndSmartTypingSurviveUndoAndSave()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p><i>Words</i> end.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        QTextCursor selection(editor->document());
+        selection.setPosition(0);
+        selection.setPosition(5, QTextCursor::KeepAnchor);
+        editor->setTextCursor(selection);
+        QTest::keyClick(editor, Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("Words"));
+        QVERIFY2(!QApplication::clipboard()->mimeData()->html().isEmpty(), "No rich HTML copied");
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Words end.Words"));
+        QTest::keyClick(editor, Qt::Key_Z, Qt::ControlModifier);
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Words end."));
+        editor->redo();
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Words end.Words"));
+        QTest::keyClicks(editor, QStringLiteral("--..."));
+        QVERIFY(editor->toPlainText().endsWith(QStringLiteral("Words—…")));
+        save->click();
+        const QByteArray saved = readFile(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY2(saved.contains("<i>Words</i>"), saved.constData());
+        QVERIFY(saved.contains(QString::fromUtf8("—…").toUtf8()));
+    }
+
+    void refusesUnsupportedPasteWithoutChangingChapter()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Start.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *state = window.findChild<QLabel *>("chapter-save-state");
+        QVERIFY(editor);
+        QVERIFY(state);
+        const QByteArray original = readFile(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        auto *mime = new QMimeData;
+        mime->setHtml(QStringLiteral("<table><tr><td>Unsupported</td></tr></table>"));
+        QApplication::clipboard()->setMimeData(mime);
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Start."));
+        QVERIFY(state->text().contains(QStringLiteral("Paste refused")));
+        QCOMPARE(readFile(QDir(library.path()).filePath(
+                     QStringLiteral("book-1/chapters/chapter-a.html"))), original);
+        auto *link = new QMimeData;
+        link->setHtml(QStringLiteral("<p><a href='https://example.com'>linked text</a></p>"));
+        QApplication::clipboard()->setMimeData(link);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Start."));
+        QVERIFY(state->text().contains(QStringLiteral("Paste refused")));
+    }
+
+    void pastedAlignmentDoesNotChangeExistingParagraph()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Start.End</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        QTextCursor insertion(editor->document());
+        insertion.setPosition(6);
+        editor->setTextCursor(insertion);
+        auto *mime = new QMimeData;
+        mime->setHtml(QStringLiteral("<p style='text-align:center'><b>Middle</b></p>"));
+        QApplication::clipboard()->setMimeData(mime);
+        QTest::keyClick(editor, Qt::Key_V, Qt::ControlModifier);
+        save->click();
+        const QByteArray saved = readFile(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY2(saved.contains("Start.<b>Middle</b>End"), saved.constData());
+        QVERIFY(!saved.contains("text-align:center"));
+    }
+
+    void richSavePreservesEmoji()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(
+            QStringLiteral("<p>Moon 🌙 and stars.</p>").toUtf8());
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClicks(editor, QStringLiteral("!"));
+        save->click();
+        const QByteArray saved = readFile(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY2(saved.contains(QStringLiteral("🌙").toUtf8()), saved.constData());
+    }
     void newWriterCreatesLibraryWithPreferencesAndOpensOutline()
     {
         QTemporaryDir privateData;

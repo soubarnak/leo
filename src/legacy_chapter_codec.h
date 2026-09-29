@@ -6,6 +6,15 @@
 #include <QString>
 #include <QVector>
 
+class QTextDocument;
+
+struct LegacyTextStyleRun {
+    int start = 0;
+    int length = 0;
+    bool bold = false;
+    bool italic = false;
+};
+
 enum class LegacyChapterContentKind {
     Supported,
     Protected,
@@ -21,6 +30,8 @@ struct LegacyChapterFragment {
     QString closingTag;
     QString rawSource;
     bool sceneBreak = false;
+    Qt::Alignment alignment = Qt::AlignLeft;
+    QVector<LegacyTextStyleRun> styles;
 };
 
 struct LegacyChapterRecordLinks {
@@ -59,5 +70,10 @@ public:
     static QByteArray encode(const LegacyChapterDocument &document,
                              const QString &text,
                              QString *error);
+    static void applyFormatting(const LegacyChapterDocument &source,
+                                QTextDocument *document);
+    static QByteArray encodeRich(const LegacyChapterDocument &source,
+                                 const QTextDocument *document,
+                                 QString *error);
     static QByteArray encode(const QString &text, bool hasUtf8Bom, QString *error);
 };

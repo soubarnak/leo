@@ -3,6 +3,10 @@
 #include <QMap>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextFragment>
 
 namespace {
 
@@ -382,6 +386,82 @@ bool decodePlainText(const QString &source, QString *text, QString *error)
     return true;
 }
 
+bool decodeStyledText(const QString &source, QString *text,
+                      QVector<LegacyTextStyleRun> *styles, QString *error)
+{
+    text->clear();
+    styles->clear();
+    QStringList tags;
+    qsizetype offset = 0;
+    while (offset < source.size()) {
+        if (source.at(offset) == QLatin1Char('<')) {
+            HtmlTag tag;
+            if (!parseTag(source, offset, &tag, error) || tag.special ||
+                tag.selfClosing || !tag.attributes.isEmpty() ||
+                (tag.name != QStringLiteral("b") && tag.name != QStringLiteral("strong") &&
+                 tag.name != QStringLiteral("i") && tag.name != QStringLiteral("em"))) {
+                *error = QStringLiteral("This paragraph contains unsupported inline markup.");
+                return false;
+            }
+            if (tag.closing) {
+                if (tags.isEmpty() || tags.takeLast() != tag.name) {
+                    *error = QStringLiteral("This paragraph has mismatched inline markup.");
+                    return false;
+                }
+            } else {
+                tags.append(tag.name);
+            }
+            offset = tag.end;
+            continue;
+        }
+        const qsizetype next = source.indexOf(QLatin1Char('<'), offset);
+        QString decoded;
+        if (!decodePlainText(source.mid(offset, next < 0 ? -1 : next - offset),
+                             &decoded, error)) {
+            return false;
+        }
+        if (!decoded.isEmpty()) {
+            LegacyTextStyleRun run;
+            run.start = text->size();
+            run.length = decoded.size();
+            run.bold = tags.contains(QStringLiteral("b")) || tags.contains(QStringLiteral("strong"));
+            run.italic = tags.contains(QStringLiteral("i")) || tags.contains(QStringLiteral("em"));
+            styles->append(run);
+            text->append(decoded);
+        }
+        offset = next < 0 ? source.size() : next;
+    }
+    if (!tags.isEmpty()) {
+        *error = QStringLiteral("This paragraph has incomplete inline markup.");
+        return false;
+    }
+    return true;
+}
+
+bool supportedParagraphAlignment(const HtmlTag &tag, Qt::Alignment *alignment)
+{
+    *alignment = Qt::AlignLeft;
+    if (tag.attributes.isEmpty()) {
+        return true;
+    }
+    if (tag.attributes.size() != 1 || !tag.attributes.contains(QStringLiteral("style"))) {
+        return false;
+    }
+    const QString style = decodedAttributeValue(tag.attributes.value(QStringLiteral("style"))).trimmed();
+    static const QRegularExpression expression(
+        QStringLiteral("^text-align\\s*:\\s*(left|center|right|justify)\\s*;?$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto match = expression.match(style);
+    if (!match.hasMatch()) {
+        return false;
+    }
+    const QString value = match.captured(1).toLower();
+    *alignment = value == QStringLiteral("center") ? Qt::AlignHCenter
+               : value == QStringLiteral("right") ? Qt::AlignRight
+               : value == QStringLiteral("justify") ? Qt::AlignJustify : Qt::AlignLeft;
+    return true;
+}
+
 QString escapeHtmlText(const QString &text)
 {
     QString escaped;
@@ -736,13 +816,15 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
             const QString body = html.mid(root.end, closingStart - root.end);
             QString prose;
             QString bodyError;
+            QVector<LegacyTextStyleRun> styles;
+            Qt::Alignment alignment;
             const QStringList rootClasses = classes(root);
             const bool plainSceneBreak = root.attributes.size() == 1 &&
                 rootClasses == QStringList{QStringLiteral("scene-break")} && body == QStringLiteral("***");
             const bool emptyBreak = body == QStringLiteral("<br>") ||
                                     body == QStringLiteral("<br/>") ||
                                     body == QStringLiteral("<br />");
-            const bool plainBody = emptyBreak || decodePlainText(body, &prose, &bodyError);
+            const bool plainBody = emptyBreak || decodeStyledText(body, &prose, &styles, &bodyError);
             if (plainSceneBreak) {
                 fragment.kind = LegacyChapterContentKind::Supported;
                 fragment.text = QStringLiteral("***");
@@ -750,9 +832,11 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
                 fragment.sourcePrefix = pendingSource;
                 fragment.openingTag = html.mid(offset, root.end - offset);
                 fragment.closingTag = html.mid(closingStart, end - closingStart);
-            } else if (root.attributes.isEmpty() && plainBody) {
+            } else if (supportedParagraphAlignment(root, &alignment) && plainBody) {
                 fragment.kind = LegacyChapterContentKind::Supported;
                 fragment.text = emptyBreak ? QString() : prose;
+                fragment.styles = styles;
+                fragment.alignment = alignment;
                 fragment.sourcePrefix = pendingSource;
                 fragment.openingTag = html.mid(offset, root.end - offset);
                 fragment.closingTag = html.mid(closingStart, end - closingStart);
@@ -933,4 +1017,125 @@ QByteArray LegacyChapterCodec::encode(const QString &text, bool hasUtf8Bom, QStr
         }
     }
     return html;
+}
+
+void LegacyChapterCodec::applyFormatting(const LegacyChapterDocument &source,
+                                         QTextDocument *document)
+{
+    QTextCursor cursor(document);
+    int position = 0;
+    for (const LegacyChapterFragment &fragment : source.fragments) {
+        if (fragment.kind == LegacyChapterContentKind::Supported) {
+            cursor.setPosition(position);
+            QTextBlockFormat blockFormat;
+            blockFormat.setAlignment(fragment.alignment);
+            cursor.mergeBlockFormat(blockFormat);
+            for (const LegacyTextStyleRun &run : fragment.styles) {
+                QTextCharFormat format;
+                format.setFontWeight(run.bold ? QFont::Bold : QFont::Normal);
+                format.setFontItalic(run.italic);
+                cursor.setPosition(position + run.start);
+                cursor.setPosition(position + run.start + run.length, QTextCursor::KeepAnchor);
+                cursor.mergeCharFormat(format);
+            }
+        }
+        position += (fragment.kind == LegacyChapterContentKind::Protected
+                         ? fragment.token.size() : fragment.text.size()) + 1;
+    }
+}
+
+QByteArray LegacyChapterCodec::encodeRich(const LegacyChapterDocument &source,
+                                          const QTextDocument *document,
+                                          QString *error)
+{
+    const QString text = document->toPlainText();
+    if (!validateEditedText(source, text, error)) {
+        return {};
+    }
+    QStringList protectedTokens;
+    for (const auto &fragment : source.fragments) {
+        if (fragment.kind == LegacyChapterContentKind::Protected) {
+            protectedTokens.append(fragment.token);
+        }
+    }
+    QByteArray output;
+    if (source.hasUtf8Bom) {
+        output.append(QByteArray::fromHex("efbbbf"));
+    }
+    int nextProtected = 0;
+    int sourceIndex = 0;
+    QString separator;
+    for (const auto &fragment : source.fragments) {
+        if (fragment.sourcePrefix.contains(QStringLiteral("\r\n")) ||
+            fragment.rawSource.startsWith(QStringLiteral("\r\n"))) {
+            separator = QStringLiteral("\r\n");
+            break;
+        }
+        if (fragment.sourcePrefix.contains(QLatin1Char('\n')) ||
+            fragment.rawSource.startsWith(QLatin1Char('\n'))) {
+            separator = QStringLiteral("\n");
+        }
+    }
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        const QString line = block.text();
+        if (nextProtected < protectedTokens.size() && line == protectedTokens.at(nextProtected)) {
+            for (int index = sourceIndex; index < source.fragments.size(); ++index) {
+                const auto &fragment = source.fragments.at(index);
+                if (fragment.kind == LegacyChapterContentKind::Protected &&
+                    fragment.token == line) {
+                    output.append(fragment.rawSource.toUtf8());
+                    sourceIndex = index + 1;
+                    break;
+                }
+            }
+            ++nextProtected;
+            continue;
+        }
+        if (sourceIndex < source.fragments.size() &&
+            source.fragments.at(sourceIndex).kind == LegacyChapterContentKind::Supported) {
+            output.append(source.fragments.at(sourceIndex).sourcePrefix.toUtf8());
+            ++sourceIndex;
+        } else if (!output.isEmpty()) {
+            output.append(separator.toUtf8());
+        }
+        const Qt::Alignment alignment = block.blockFormat().alignment();
+        QString opening = QStringLiteral("<p>");
+        if (alignment & Qt::AlignHCenter) opening = QStringLiteral("<p style=\"text-align:center\">");
+        else if (alignment & Qt::AlignRight) opening = QStringLiteral("<p style=\"text-align:right\">");
+        else if (alignment & Qt::AlignJustify) opening = QStringLiteral("<p style=\"text-align:justify\">");
+        else if (line == QStringLiteral("***")) opening = QStringLiteral("<p class=\"scene-break\">");
+        output.append(opening.toUtf8());
+        if (line.isEmpty()) {
+            output.append("<br>");
+        } else {
+            bool bold = false;
+            bool italic = false;
+            for (int index = 0; index < line.size();) {
+                QTextCursor character(const_cast<QTextDocument *>(document));
+                character.setPosition(block.position() + index);
+                character.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+                const QTextCharFormat format = character.charFormat();
+                const bool nextBold = format.fontWeight() >= QFont::Bold;
+                const bool nextItalic = format.fontItalic();
+                if (nextItalic != italic || nextBold != bold) {
+                    if (italic) output.append("</i>");
+                    if (bold) output.append("</b>");
+                    if (nextBold) output.append("<b>");
+                    if (nextItalic) output.append("<i>");
+                    bold = nextBold;
+                    italic = nextItalic;
+                }
+                const int length = line.at(index).isHighSurrogate() &&
+                                   index + 1 < line.size() &&
+                                   line.at(index + 1).isLowSurrogate() ? 2 : 1;
+                output.append(escapeHtmlText(line.mid(index, length)).toUtf8());
+                index += length;
+            }
+            if (italic) output.append("</i>");
+            if (bold) output.append("</b>");
+        }
+        output.append("</p>");
+    }
+    output.append(source.trailingSource.toUtf8());
+    return output;
 }
