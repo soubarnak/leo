@@ -12,6 +12,7 @@
 #include "darling_records.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -285,11 +286,11 @@ public:
     {
     }
 
-    void setPreferences(const QString &style, const QString &bodyFont)
+    void setPreferences(const QString &style, const QString &bodyFont, double pointSize)
     {
         style_ = style;
         QFont font(bodyFont);
-        font.setPointSizeF(std::max(30.0, font.pointSizeF() * 2.1));
+        font.setPointSizeF(std::max(30.0, pointSize * 2.1));
         if (style_ == QStringLiteral("fantasy")) {
             font.setItalic(true);
         } else if (style_ == QStringLiteral("scifi")) {
@@ -1047,6 +1048,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     editorPage_ = new QWidget(pages_);
     auto *editorLayout = new QVBoxLayout(editorPage_);
     editorChrome_ = new QWidget(editorPage_);
+    editorChrome_->setObjectName(QStringLiteral("writing-controls"));
     auto *chromeLayout = new QVBoxLayout(editorChrome_);
     chromeLayout->setContentsMargins(0, 0, 0, 0);
     auto *editorToolbar = new QHBoxLayout;
@@ -1100,6 +1102,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     chapterEditor_ = new ProtectedChapterEditor(editorPage_);
     chapterEditor_->setObjectName(QStringLiteral("chapter-editor"));
     chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
+    chapterEditor_->setTabChangesFocus(true);
     chapterEditor_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     chapterEditor_->viewport()->installEventFilter(this);
     dropCapHighlighter_ = new DropCapHighlighter(chapterEditor_->document());
@@ -1138,7 +1141,12 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         if (!loadingChapter_ && bookFlow_ && bookPages_) {
             const QPoint cursor = chapterEditor_->mapTo(
                 bookPages_, chapterEditor_->cursorRect().center());
-            bookFlow_->ensureVisible(cursor.x(), cursor.y(), 24, 96);
+            if (activePreferences_.typewriter) {
+                QScrollBar *bar = bookFlow_->verticalScrollBar();
+                bar->setValue(cursor.y() - bookFlow_->viewport()->height() * 45 / 100);
+            } else {
+                bookFlow_->ensureVisible(cursor.x(), cursor.y(), 24, 96);
+            }
         }
     });
     chromeHoverFilter_ = new HoverFadeFilter(editorChrome_, editorChrome_);
@@ -1269,6 +1277,104 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             log.close();
         }
         QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
+    });
+    QAction *writingHelp = helpMenu->addAction(QStringLiteral("Writing Shortcuts…"));
+    writingHelp->setShortcut(QKeySequence::HelpContents);
+    connect(writingHelp, &QAction::triggered, this, [this] {
+        QMessageBox::information(this, QStringLiteral("Writing shortcuts"),
+            QStringLiteral("Tab moves between controls. Ctrl+B and Ctrl+I format prose; "
+                           "Ctrl+F finds text. Ctrl+C, Ctrl+X and Ctrl+V use the clipboard. "
+                           "Ctrl+Enter toggles fullscreen; Escape exits fullscreen. "
+                           "Use View for themes, typefaces, zoom and typewriter scrolling."));
+    });
+
+    QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
+    QMenu *themeMenu = viewMenu->addMenu(QStringLiteral("Page theme"));
+    auto *themeGroup = new QActionGroup(this);
+    paperAction_ = themeMenu->addAction(QStringLiteral("Paper"));
+    nightAction_ = themeMenu->addAction(QStringLiteral("Night"));
+    for (QAction *action : {paperAction_, nightAction_}) {
+        action->setCheckable(true);
+        themeGroup->addAction(action);
+    }
+    connect(paperAction_, &QAction::triggered, this, [this] {
+        savePresentationPreference(QStringLiteral("pageTheme"), QStringLiteral("paper"));
+    });
+    connect(nightAction_, &QAction::triggered, this, [this] {
+        savePresentationPreference(QStringLiteral("pageTheme"), QStringLiteral("night"));
+    });
+    brightAction_ = viewMenu->addAction(QStringLiteral("Brighter controls"));
+    brightAction_->setCheckable(true);
+    connect(brightAction_, &QAction::triggered, this, [this](bool checked) {
+        savePresentationPreference(QStringLiteral("uiBright"), checked);
+    });
+    pinControlsAction_ = viewMenu->addAction(QStringLiteral("Pin writing controls"));
+    pinControlsAction_->setCheckable(true);
+    connect(pinControlsAction_, &QAction::triggered, this, [this](bool checked) {
+        savePresentationPreference(QStringLiteral("chromePinned"), checked);
+    });
+    typewriterAction_ = viewMenu->addAction(QStringLiteral("Typewriter scrolling"));
+    typewriterAction_->setCheckable(true);
+    connect(typewriterAction_, &QAction::triggered, this, [this](bool checked) {
+        savePresentationPreference(QStringLiteral("typewriter"), checked);
+    });
+    QMenu *fontMenu = viewMenu->addMenu(QStringLiteral("Body typeface"));
+    for (const QString &family : {QStringLiteral("Georgia"), QStringLiteral("Palatino"),
+                                  QStringLiteral("Baskerville"), QStringLiteral("DejaVu Serif"),
+                                  QStringLiteral("Liberation Serif"), QStringLiteral("Noto Serif")}) {
+        if (FontPreferences::installedFamily({family}).isEmpty()) continue;
+        connect(fontMenu->addAction(family), &QAction::triggered, this, [this, family] {
+            savePresentationPreference(QStringLiteral("bodyFont"), family);
+        });
+    }
+    QMenu *dropCapMenu = viewMenu->addMenu(QStringLiteral("Drop-cap style"));
+    const QStringList dropCapNames{QStringLiteral("Literary"), QStringLiteral("Fantasy"),
+                                   QStringLiteral("Sci-Fi")};
+    const QStringList dropCapIds{QStringLiteral("literary"), QStringLiteral("fantasy"),
+                                 QStringLiteral("scifi")};
+    for (int index = 0; index < dropCapNames.size(); ++index) {
+        const QString id = dropCapIds.at(index);
+        connect(dropCapMenu->addAction(dropCapNames.at(index)), &QAction::triggered,
+                this, [this, id] { savePresentationPreference(QStringLiteral("dropCapStyle"), id); });
+    }
+    viewMenu->addSeparator();
+    const auto zoomBy = [this](double change) {
+        savePresentationPreference(QStringLiteral("pageZoom"),
+            qBound(0.75, activePreferences_.pageZoom + change, 1.6));
+    };
+    QAction *zoomIn = viewMenu->addAction(QStringLiteral("Zoom in"));
+    zoomIn->setShortcut(QKeySequence::ZoomIn);
+    connect(zoomIn, &QAction::triggered, this, [zoomBy] { zoomBy(0.1); });
+    QAction *zoomOut = viewMenu->addAction(QStringLiteral("Zoom out"));
+    zoomOut->setShortcut(QKeySequence::ZoomOut);
+    connect(zoomOut, &QAction::triggered, this, [zoomBy] { zoomBy(-0.1); });
+    QAction *resetZoom = viewMenu->addAction(QStringLiteral("Reset zoom"));
+    resetZoom->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    connect(resetZoom, &QAction::triggered,
+            this, [this] { savePresentationPreference(QStringLiteral("pageZoom"), 1.0); });
+    QMenu *sizeMenu = viewMenu->addMenu(QStringLiteral("Writing text size"));
+    connect(sizeMenu->addAction(QStringLiteral("Larger")), &QAction::triggered, this, [this] {
+        savePresentationPreference(QStringLiteral("editorFontSize"),
+                                   qMin(22, activePreferences_.editorFontSize + 1));
+    });
+    connect(sizeMenu->addAction(QStringLiteral("Smaller")), &QAction::triggered, this, [this] {
+        savePresentationPreference(QStringLiteral("editorFontSize"),
+                                   qMax(14, activePreferences_.editorFontSize - 1));
+    });
+    connect(sizeMenu->addAction(QStringLiteral("Reset size")), &QAction::triggered, this, [this] {
+        savePresentationPreference(QStringLiteral("editorFontSize"), 17);
+    });
+    QAction *fullscreen = viewMenu->addAction(QStringLiteral("Toggle fullscreen"));
+    fullscreen->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
+    connect(fullscreen, &QAction::triggered, this, [this] {
+        isFullScreen() ? showNormal() : showFullScreen();
+    });
+    QAction *exitFullscreen = new QAction(this);
+    exitFullscreen->setShortcut(QKeySequence(Qt::Key_Escape));
+    exitFullscreen->setShortcutContext(Qt::WindowShortcut);
+    addAction(exitFullscreen);
+    connect(exitFullscreen, &QAction::triggered, this, [this] {
+        if (isFullScreen()) showNormal();
     });
 
     QMenu *editMenu = menuBar()->addMenu(QStringLiteral("&Edit"));
@@ -2216,6 +2322,10 @@ void LibraryWindow::refreshBookPages()
         const QString id = item->data(0, ChapterIdRole).toString();
         auto *page = new QWidget(bookPages_);
         page->setObjectName(QStringLiteral("chapter-page-") + id);
+        const bool night = activePreferences_.pageTheme == QStringLiteral("night");
+        page->setStyleSheet(QStringLiteral("background: %1; color: %2;")
+            .arg(night ? QStringLiteral("#262329") : QStringLiteral("#fffdf7"),
+                 night ? QStringLiteral("#e8dfd4") : QStringLiteral("#26211e")));
         auto *layout = new QVBoxLayout(page);
         layout->setContentsMargins(24, 24, 24, 24);
         auto *heading = new QPushButton(item->text(0), page);
@@ -2265,7 +2375,7 @@ void LibraryWindow::refreshBookPages()
         bookPagesLayout_->addWidget(page);
     }
     bookPagesLayout_->addStretch();
-    resizeChapterEditorToContents();
+    updatePresentation();
     if (activePage) {
         QPointer<QWidget> currentPage(activePage);
         QTimer::singleShot(0, this, [this, currentPage] {
@@ -2973,7 +3083,7 @@ void LibraryWindow::applyPreferences(const LibraryPreferences &preferences)
         notices.append(QStringLiteral("Unknown writing mode; using Pantser."));
     }
 
-        const QString systemSerif = FontPreferences::systemSerifFamily();
+    const QString systemSerif = FontPreferences::systemSerifFamily();
     QString bodyFont = activePreferences_.bodyFont.trimmed();
     if (activePreferences_.bodyFontInvalid) {
         notices.append(QStringLiteral("Saved typeface choice is invalid; using '%1'.")
@@ -2991,8 +3101,10 @@ void LibraryWindow::applyPreferences(const LibraryPreferences &preferences)
     } else {
         bodyFont = systemSerif;
     }
+    activePreferences_.bodyFont = bodyFont;
     QFont editorFont = chapterEditor_->font();
     editorFont.setFamily(bodyFont);
+    editorFont.setPointSizeF(activePreferences_.editorFontSize * activePreferences_.pageZoom);
     chapterEditor_->setFont(editorFont);
 
     if (activePreferences_.dropCapStyleInvalid ||
@@ -3005,8 +3117,105 @@ void LibraryWindow::applyPreferences(const LibraryPreferences &preferences)
         notices.append(QStringLiteral("Drop-cap typeface is unavailable; using the body typeface."));
     }
     static_cast<DropCapHighlighter *>(dropCapHighlighter_)
-        ->setPreferences(activePreferences_.dropCapStyle, bodyFont);
+        ->setPreferences(activePreferences_.dropCapStyle, bodyFont,
+                         activePreferences_.editorFontSize * activePreferences_.pageZoom);
     preferenceNotice_ = notices.join(QLatin1Char(' '));
+    updatePresentation();
+}
+
+void LibraryWindow::updatePresentation()
+{
+    const bool night = activePreferences_.pageTheme == QStringLiteral("night");
+    const QString paperColor = night ? QStringLiteral("#262329") : QStringLiteral("#fffdf7");
+    const QString inkColor = night ? QStringLiteral("#e8dfd4") : QStringLiteral("#26211e");
+    bookFlow_->setStyleSheet(QStringLiteral("QScrollArea { background: %1; border: 0; }")
+                                 .arg(night ? QStringLiteral("#18171b") : QStringLiteral("#ded8ce")));
+    bookPages_->setStyleSheet(QStringLiteral("background: %1;").arg(paperColor));
+    QFont font = chapterEditor_->font();
+    font.setPointSizeF(activePreferences_.editorFontSize * activePreferences_.pageZoom);
+    chapterEditor_->setFont(font);
+    for (int index = 0; index < bookPagesLayout_->count(); ++index) {
+        QWidget *page = bookPagesLayout_->itemAt(index)->widget();
+        if (page && page != chapterEditor_) {
+            page->setStyleSheet(QStringLiteral("background: %1; color: %2;")
+                                    .arg(paperColor, inkColor));
+            if (auto *preview = page->findChild<QLabel *>()) preview->setFont(font);
+            if (auto *heading = page->findChild<QPushButton *>()) {
+                QFont headingFont = font;
+                headingFont.setBold(true);
+                headingFont.setPointSizeF(font.pointSizeF() * 1.1);
+                heading->setFont(headingFont);
+            }
+        }
+    }
+    chapterEditor_->setStyleSheet(QStringLiteral("QPlainTextEdit { color: %1; background: %2; "
+                                                   "border: 0; selection-background-color: #9a7658; }")
+                                      .arg(inkColor, paperColor));
+    bookPagesLayout_->setContentsMargins(24, 24, 24,
+        activePreferences_.typewriter ? qMax(400, bookFlow_->viewport()->height()) : 24);
+    editorChrome_->setStyleSheet(activePreferences_.uiBright
+        ? QStringLiteral("QWidget#writing-controls { background: #fff4d9; color: #241b16; } "
+                         "QWidget#writing-controls QPushButton { background: #f7e5bd; "
+                         "color: #241b16; border: 1px solid #785d36; padding: 4px; }")
+        : QString());
+    chromeHoverFilter_->setAttention(activePreferences_.chromePinned ||
+                                     (saveFailed_ && !chapterConflict_));
+    paperAction_->setChecked(!night);
+    nightAction_->setChecked(night);
+    brightAction_->setChecked(activePreferences_.uiBright);
+    pinControlsAction_->setChecked(activePreferences_.chromePinned);
+    typewriterAction_->setChecked(activePreferences_.typewriter);
+    resizeChapterEditorToContents();
+}
+
+void LibraryWindow::savePresentationPreference(const QString &key, const QJsonValue &value)
+{
+    if (activeLibraryPath_.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Open a Library to save writing preferences."));
+        updatePresentation();
+        return;
+    }
+    QByteArray original;
+    QString error;
+    if (!LibraryPersistence::readLibraryFile(activeLibraryPath_, QStringLiteral("library.json"),
+                                             &original, &error)) {
+        statusBar()->showMessage(error);
+        updatePresentation();
+        return;
+    }
+    const QJsonDocument parsed = QJsonDocument::fromJson(original);
+    if (!parsed.isObject()) {
+        statusBar()->showMessage(QStringLiteral("Library preferences could not be read safely."));
+        updatePresentation();
+        return;
+    }
+    QJsonObject metadata = parsed.object();
+    if (key == QStringLiteral("bodyFont") || key == QStringLiteral("dropCapStyle")) {
+        QJsonObject fonts = metadata.value(QStringLiteral("fonts")).toObject();
+        fonts.insert(key == QStringLiteral("bodyFont") ? QStringLiteral("body")
+                                                         : QStringLiteral("dropcap"), value);
+        metadata.insert(QStringLiteral("fonts"), fonts);
+    } else {
+        metadata.insert(key, value);
+    }
+    const PersistenceResult saved = LibraryPersistence::saveFile(
+        activeLibraryPath_, QStringLiteral("library.json"), LibraryPersistence::hash(original),
+        QJsonDocument(metadata).toJson(QJsonDocument::Indented));
+    if (!saved.ok) {
+        statusBar()->showMessage(QStringLiteral("Writing preference was not saved: %1").arg(saved.error));
+        updatePresentation();
+        return;
+    }
+    const bool organizationReady = !organization_ || organization_->load(&error);
+    const LibraryReadResult refreshed = LibraryReader::read(activeLibraryPath_);
+    if (refreshed.ok()) {
+        applyPreferences(refreshed.library.preferences);
+        statusBar()->showMessage(organizationReady
+            ? QStringLiteral("Writing preferences saved.")
+            : QStringLiteral("Preference saved; reopen the Library before organizing: %1").arg(error));
+    } else {
+        statusBar()->showMessage(refreshed.error);
+    }
 }
 
 bool LibraryWindow::saveCurrentChapter()
@@ -3409,7 +3618,8 @@ void LibraryWindow::saveRepairCopy()
 
 void LibraryWindow::updateEditorState(const QString &message)
 {
-    chromeHoverFilter_->setAttention(saveFailed_ && !chapterConflict_);
+    chromeHoverFilter_->setAttention(activePreferences_.chromePinned ||
+                                     (saveFailed_ && !chapterConflict_));
     if (!message.isEmpty()) {
         if (chapterDirty_ && saveFailed_ && chapterConflict_) {
             editorState_->setText(QStringLiteral("Unsaved changes — save paused. %1")

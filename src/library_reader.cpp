@@ -272,6 +272,17 @@ LibraryReadResult LibraryReader::read(const QString &path)
 
     Library library;
     library.path = root;
+    const QString pageTheme = libraryObject.value(QStringLiteral("pageTheme")).toString();
+    if (pageTheme == QStringLiteral("paper") || pageTheme == QStringLiteral("night")) {
+        library.preferences.pageTheme = pageTheme;
+    }
+    library.preferences.uiBright = libraryObject.value(QStringLiteral("uiBright")).toBool();
+    library.preferences.chromePinned = libraryObject.value(QStringLiteral("chromePinned")).toBool();
+    library.preferences.typewriter = libraryObject.value(QStringLiteral("typewriter")).toBool();
+    const QJsonValue fontSize = libraryObject.value(QStringLiteral("editorFontSize"));
+    if (fontSize.isDouble()) library.preferences.editorFontSize = qBound(14, fontSize.toInt(17), 22);
+    const QJsonValue zoom = libraryObject.value(QStringLiteral("pageZoom"));
+    if (zoom.isDouble()) library.preferences.pageZoom = qBound(0.75, zoom.toDouble(1.0), 1.6);
     const QJsonValue writingStyle = libraryObject.value(QStringLiteral("writingStyle"));
     if (writingStyle.isString()) {
         if (!writingStyle.toString().isEmpty()) {

@@ -28,6 +28,7 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QWidget;
 class QCloseEvent;
+class QJsonValue;
 class HoverFadeFilter;
 
 enum class LibraryDropPosition {
@@ -97,6 +98,8 @@ private:
     void applyPlanningResult(const PlanningResult &result);
     bool ensurePlanningRecords();
     void applyPreferences(const LibraryPreferences &preferences);
+    void savePresentationPreference(const QString &key, const QJsonValue &value);
+    void updatePresentation();
     bool saveCurrentChapter();
     bool savePendingEdits();
     void saveRepairCopy();
@@ -142,6 +145,11 @@ private:
     QPushButton *repairCopyButton_ = nullptr;
     QWidget *editorChrome_ = nullptr;
     HoverFadeFilter *chromeHoverFilter_ = nullptr;
+    QAction *paperAction_ = nullptr;
+    QAction *nightAction_ = nullptr;
+    QAction *brightAction_ = nullptr;
+    QAction *pinControlsAction_ = nullptr;
+    QAction *typewriterAction_ = nullptr;
     QTimer *saveTimer_ = nullptr;
     QWidget *refusalPage_ = nullptr;
     QLabel *refusal_ = nullptr;

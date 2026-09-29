@@ -32,6 +32,12 @@ struct LibraryPreferences {
     QString bodyFont;
     QString dropCapStyle = QStringLiteral("literary");
     QString initialBookId;
+    QString pageTheme = QStringLiteral("night");
+    bool uiBright = false;
+    bool chromePinned = false;
+    bool typewriter = false;
+    int editorFontSize = 17;
+    double pageZoom = 1.0;
     bool writingStyleInvalid = false;
     bool bodyFontInvalid = false;
     bool dropCapStyleInvalid = false;
