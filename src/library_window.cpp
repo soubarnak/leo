@@ -1,6 +1,7 @@
 #include "library_window.h"
 
 #include "app_paths.h"
+#include "ai_covers.h"
 #include "book_covers.h"
 #include "font_preferences.h"
 #include "legacy_chapter_codec.h"
@@ -52,6 +53,7 @@
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -1983,13 +1985,67 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *importCover = covers->addAction(QStringLiteral("Import image…"));
     QAction *showImage = covers->addAction(QStringLiteral("Show imported image"));
     QAction *showAbstract = covers->addAction(QStringLiteral("Show seeded artwork"));
+    QAction *showPainted = covers->addAction(QStringLiteral("Show generated artwork"));
     QAction *repaintCover = covers->addAction(QStringLiteral("Repaint seeded artwork"));
     QAction *removeCover = covers->addAction(QStringLiteral("Remove imported image"));
+    covers->addSeparator();
+    QAction *saveApiKey = covers->addAction(QStringLiteral("Save OpenAI API key…"));
+    QAction *generateCover = covers->addAction(QStringLiteral("Generate artwork from manuscript…"));
     QAction *rename = menu.addAction(QStringLiteral("Rename book…"));
     QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
     QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
+    if (chosen == saveApiKey) {
+        bool accepted = false;
+        const QString key = QInputDialog::getText(this, QStringLiteral("OpenAI API key"),
+            QStringLiteral("Save key in the system secret store:"), QLineEdit::Password,
+            {}, &accepted);
+        if (accepted) {
+            auto *service = new AiCovers(qApp);
+            QPointer<LibraryWindow> window(this);
+            service->storeKey(key, [window, service](bool ok, const QString &message) {
+                if (window) QMessageBox::information(window, ok ? QStringLiteral("Key saved")
+                                                                 : QStringLiteral("Key unavailable"), message);
+                service->deleteLater();
+            });
+        }
+        return;
+    }
+    if (chosen == generateCover) {
+        if (!savePendingEdits()) return;
+        if (QMessageBox::question(this, QStringLiteral("Generate cover artwork"),
+            QStringLiteral("LEO will send an excerpt of this manuscript to OpenAI and make two paid API requests. Generate this cover now?"),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+            statusBar()->showMessage(QStringLiteral("Cover generation cancelled; cover unchanged."), 5000);
+            return;
+        }
+        auto *service = new AiCovers(qApp);
+        auto *progress = new QProgressDialog(QStringLiteral("Generating cover artwork…"),
+            QStringLiteral("Cancel"), 0, 0, this);
+        progress->setWindowModality(Qt::NonModal);
+        progress->setMinimumDuration(0);
+        progress->show();
+        connect(progress, &QProgressDialog::canceled, service, &AiCovers::cancel);
+        const QString root = activeLibraryPath_;
+        QPointer<LibraryWindow> window(this);
+        QPointer<QProgressDialog> progressGuard(progress);
+        statusBar()->showMessage(QStringLiteral("Generating artwork…"));
+        service->generate(root, bookId,
+            [window, progressGuard, service, root](bool ok, const QString &message) {
+                service->deleteLater();
+                if (progressGuard) progressGuard->deleteLater();
+                if (!window) return;
+                if (ok) {
+                    if (window->activeLibraryPath_ == root) window->refreshOrganizationView();
+                    window->statusBar()->showMessage(message, 8000);
+                } else {
+                    QMessageBox::warning(window, QStringLiteral("Cover unchanged"), message);
+                }
+            });
+        return;
+    }
     if (chosen == importCover || chosen == showImage || chosen == showAbstract ||
+        chosen == showPainted ||
         chosen == repaintCover || chosen == removeCover) {
         CoverResult result;
         if (chosen == importCover) {
@@ -2004,7 +2060,8 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
             result = chosen == removeCover
                 ? BookCovers::removeImage(activeLibraryPath_, bookId)
                 : BookCovers::setMode(activeLibraryPath_, bookId,
-                    chosen == showImage ? CoverMode::Image : CoverMode::Abstract);
+                    chosen == showImage ? CoverMode::Image :
+                    chosen == showPainted ? CoverMode::Painted : CoverMode::Abstract);
         }
         if (!result.ok) {
             QMessageBox::warning(this, QStringLiteral("Cover unchanged"), result.error);

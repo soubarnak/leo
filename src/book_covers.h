@@ -8,7 +8,7 @@ struct CoverResult {
     QString error;
 };
 
-enum class CoverMode { Image, Abstract };
+enum class CoverMode { Image, Abstract, Painted };
 
 class BookCovers final {
 public:
@@ -18,7 +18,9 @@ public:
                                CoverMode mode);
     static CoverResult removeImage(const QString &libraryPath, const QString &bookId);
     static CoverResult repaint(const QString &libraryPath, const QString &bookId);
+    static CoverResult savePainting(const QString &libraryPath, const QString &bookId,
+                                    const QByteArray &imageBytes);
     static QImage exportCover(const QString &libraryPath, const QString &bookId);
     static QImage render(const QString &libraryPath, const QString &bookId,
-                         const QSize &size);
+                         const QSize &size, bool ignorePainting = false);
 };

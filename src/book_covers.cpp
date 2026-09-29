@@ -50,11 +50,13 @@ CoverResult change(const QString &root, const QString &id, CoverMode mode,
         changes.append({id + QLatin1Char('/') + file, {}, true, bytes});
         metadata.insert(QStringLiteral("coverImage"), file);
     }
-    if (mode == CoverMode::Image && source.isEmpty()) {
-        const QString filename = metadata.value(QStringLiteral("coverImage")).toString();
+    if (mode != CoverMode::Abstract && source.isEmpty()) {
+        const QString filename = mode == CoverMode::Image
+            ? metadata.value(QStringLiteral("coverImage")).toString()
+            : metadata.value(QStringLiteral("coverArt")).toObject().value(QStringLiteral("file")).toString();
         if (filename.isEmpty() || QFileInfo(filename).fileName() != filename ||
             !QImageReader(QDir(root).filePath(id + QLatin1Char('/') + filename)).canRead()) {
-            return {false, QStringLiteral("The imported cover image is unavailable.")};
+            return {false, QStringLiteral("The selected cover image is unavailable.")};
         }
     }
     if (removeImage) {
@@ -62,7 +64,8 @@ CoverResult change(const QString &root, const QString &id, CoverMode mode,
         metadata.insert(QStringLiteral("coverMode"), QStringLiteral("abstract"));
     } else {
         metadata.insert(QStringLiteral("coverMode"), mode == CoverMode::Image
-            ? QStringLiteral("image") : QStringLiteral("abstract"));
+            ? QStringLiteral("image") : mode == CoverMode::Painted
+                ? QStringLiteral("painted") : QStringLiteral("abstract"));
     }
     if (newSeed || metadata.value(QStringLiteral("coverSeed")).isUndefined()) {
         metadata.insert(QStringLiteral("coverSeed"), newSeed
@@ -96,16 +99,55 @@ CoverResult BookCovers::repaint(const QString &root, const QString &id)
     return change(root, id, CoverMode::Abstract, {}, true);
 }
 
-QImage BookCovers::render(const QString &root, const QString &id, const QSize &size)
+CoverResult BookCovers::savePainting(const QString &root, const QString &id,
+                                     const QByteArray &imageBytes)
+{
+    if (id.isEmpty() || id.contains(QLatin1Char('/')) || id.contains(QLatin1Char('\\')) ||
+        id == QStringLiteral(".") || id == QStringLiteral(".."))
+        return {false, QStringLiteral("Invalid book ID.")};
+    QImage image;
+    if (!image.loadFromData(imageBytes) || image.width() > 10000 || image.height() > 10000)
+        return {false, QStringLiteral("The generated image is invalid.")};
+    QByteArray original;
+    QString error;
+    const QString metadataPath = id + QStringLiteral("/book.json");
+    if (!LibraryPersistence::readLibraryFile(root, metadataPath, &original, &error))
+        return {false, error};
+    const QJsonDocument document = QJsonDocument::fromJson(original);
+    if (!document.isObject()) return {false, QStringLiteral("Invalid book metadata.")};
+    QJsonObject metadata = document.object();
+    const QString file = QStringLiteral("art-") +
+        QUuid::createUuid().toString(QUuid::Id128) + QStringLiteral(".png");
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    if (!image.save(&buffer, "PNG")) return {false, QStringLiteral("Could not encode generated image.")};
+    metadata.insert(QStringLiteral("coverArt"), QJsonObject{{QStringLiteral("status"),
+        QStringLiteral("done")}, {QStringLiteral("file"), file}});
+    if (metadata.value(QStringLiteral("coverImage")).toString().isEmpty())
+        metadata.insert(QStringLiteral("coverMode"), QStringLiteral("painted"));
+    const PersistenceResult saved = LibraryPersistence::saveFiles(root, {
+        {id + QLatin1Char('/') + file, {}, true, png},
+        {metadataPath, LibraryPersistence::hash(original), false,
+         QJsonDocument(metadata).toJson(QJsonDocument::Indented)}});
+    return {saved.ok, saved.error};
+}
+
+QImage BookCovers::render(const QString &root, const QString &id, const QSize &size,
+                          bool ignorePainting)
 {
     if (size.isEmpty()) return {};
     QByteArray bytes;
     QString error;
     if (!LibraryPersistence::readLibraryFile(root, id + QStringLiteral("/book.json"), &bytes, &error)) return {};
     const QJsonObject metadata = QJsonDocument::fromJson(bytes).object();
-    const QString filename = metadata.value(QStringLiteral("coverImage")).toString();
-    const QString mode = metadata.value(QStringLiteral("coverMode")).toString();
-    if (!filename.isEmpty() && (mode.isEmpty() || mode == QStringLiteral("image")) &&
+    const QString mode = ignorePainting ? QStringLiteral("abstract")
+                                        : metadata.value(QStringLiteral("coverMode")).toString();
+    const QString filename = mode == QStringLiteral("painted")
+        ? metadata.value(QStringLiteral("coverArt")).toObject().value(QStringLiteral("file")).toString()
+        : metadata.value(QStringLiteral("coverImage")).toString();
+    if (!filename.isEmpty() && (mode.isEmpty() || mode == QStringLiteral("image") ||
+                                mode == QStringLiteral("painted")) &&
         QFileInfo(filename).fileName() == filename) {
         QImageReader reader(QDir(root).filePath(id + QLatin1Char('/') + filename));
         reader.setAutoTransform(true);
@@ -159,5 +201,5 @@ QImage BookCovers::exportCover(const QString &root, const QString &id)
         const QImage imported = reader.read();
         if (!imported.isNull()) return imported;
     }
-    return render(root, id, QSize(1600, 2560));
+    return render(root, id, QSize(1600, 2560), true);
 }

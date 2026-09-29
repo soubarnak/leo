@@ -9,7 +9,7 @@ Homepage: https://github.com/soubarnak/leo
 
 Package: leo-writer
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, qt6-qpa-plugins, libhunspell-1.7-0, hunspell-en-us
+Depends: ${shlibs:Depends}, ${misc:Depends}, qt6-qpa-plugins, libhunspell-1.7-0, hunspell-en-us, libsecret-tools
 Description: native desktop library browser for LEO
  LEO opens existing NEO Libraries in a native Qt desktop window.
  This initial package provides read-only browsing of authors, shelves,

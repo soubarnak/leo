@@ -1,6 +1,7 @@
 #include "book_covers.h"
 #include "library_persistence.h"
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -14,6 +15,7 @@ class BookCoversTest : public QObject {
 private slots:
     void importFailureKeepsPriorCover();
     void modeSwitchAndRepaintPersist();
+    void generatedArtworkPreservesImportedCoverAndExport();
 };
 
 static void write(const QString &path, const QByteArray &bytes)
@@ -78,6 +80,41 @@ void BookCoversTest::modeSwitchAndRepaintPersist()
     QVERIFY(!BookCovers::setMode(root.path(), QStringLiteral("book-one"), CoverMode::Image).ok);
     QVERIFY(BookCovers::removeImage(root.path(), QStringLiteral("book-one")).ok);
     QVERIFY(!BookCovers::render(root.path(), QStringLiteral("book-one"), QSize(72, 108)).isNull());
+}
+
+void BookCoversTest::generatedArtworkPreservesImportedCoverAndExport()
+{
+    QTemporaryDir root;
+    QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/book-one")));
+    const QString metadataPath = root.path() + QStringLiteral("/book-one/book.json");
+    write(metadataPath, R"({"id":"book-one","title":"First","author":"Ada","chapterOrder":[]})");
+    QImage imported(20, 30, QImage::Format_RGB32);
+    imported.fill(Qt::red);
+    const QString source = root.path() + QStringLiteral("/source.png");
+    QVERIFY(imported.save(source));
+    QVERIFY(BookCovers::importImage(root.path(), QStringLiteral("book-one"), source).ok);
+    QImage painted(20, 30, QImage::Format_RGB32);
+    painted.fill(Qt::blue);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    QVERIFY(buffer.open(QIODevice::WriteOnly));
+    QVERIFY(painted.save(&buffer, "PNG"));
+    QVERIFY(BookCovers::savePainting(root.path(), QStringLiteral("book-one"), bytes).ok);
+    QCOMPARE(BookCovers::render(root.path(), QStringLiteral("book-one"), QSize(20, 30))
+                 .pixelColor(10, 10), QColor(Qt::red));
+    QVERIFY(BookCovers::setMode(root.path(), QStringLiteral("book-one"), CoverMode::Painted).ok);
+    QCOMPARE(BookCovers::render(root.path(), QStringLiteral("book-one"), QSize(20, 30))
+                 .pixelColor(10, 10), QColor(Qt::blue));
+    QCOMPARE(BookCovers::exportCover(root.path(), QStringLiteral("book-one"))
+                 .pixelColor(10, 10), QColor(Qt::red));
+    QFile file(metadataPath);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray before = file.readAll();
+    file.close();
+    QVERIFY(!BookCovers::savePainting(root.path(), QStringLiteral("book-one"),
+                                      QByteArrayLiteral("invalid image")).ok);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), before);
 }
 
 QTEST_MAIN(BookCoversTest)
