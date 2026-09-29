@@ -995,6 +995,13 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     QAction *handoffAction = fileMenu->addAction(
         QStringLiteral("Prepare Device Handoff…"));
     connect(handoffAction, &QAction::triggered, this, [this] {
+        if (activeLibraryPath_.isEmpty()) {
+            QMessageBox::information(
+                this, QStringLiteral("No Library open"),
+                QStringLiteral("Open a Library in LEO before preparing a device handoff."));
+            return;
+        }
+
         if (!savePendingEdits()) {
             QMessageBox::warning(
                 this, QStringLiteral("Device handoff is not ready"),

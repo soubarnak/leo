@@ -27,6 +27,21 @@ uninstall/reinstall.
 First install only: sideload, then grant **All files access**
 (Settings → Apps → NEO Pocket).
 
+## Device handoff check
+
+Use a disposable Library and the same Syncthing folder on desktop and phone.
+Edit one sentence in a chapter on the desktop, close the app, and wait until
+Syncthing reports **Up to Date** on both devices. Open that Library in Pocket,
+edit another sentence, wait two seconds for Pocket's autosave, then return
+to the bookshelf and close Pocket. Wait for **Up to Date** again before opening
+the Library on desktop. Confirm both edits are present, chapter order and titles
+are unchanged, and sticky/darling references and unrecognized Library files
+remain intact. Repeat through LEO's **File → Prepare Device Handoff…** action,
+choosing **Close LEO** before waiting for synchronization.
+
+Edit a Library on one device at a time. Do not open it for editing on another
+device until the prior device has closed and Syncthing reports **Up to Date**.
+
 Local builds need Android Studio and: `cd pocket && npm install`, copy
 `../app.js`, `../covers.js` and `../styles.css` into `www/`, `npx cap sync android`, then
 build from `android/`. Local builds are debug-signed and won't install over a

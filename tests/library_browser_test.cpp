@@ -1,6 +1,8 @@
 #include "library_window.h"
 
 #include <QApplication>
+#include <QAction>
+#include <QAbstractButton>
 #include <QClipboard>
 #include <QComboBox>
 #include <QCryptographicHash>
@@ -15,6 +17,7 @@
 #include <QMap>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTemporaryDir>
@@ -159,6 +162,51 @@ QTemporaryDir makeSingleChapterLibrary(const QByteArray &chapter,
     return temporary;
 }
 
+QTemporaryDir makeNeoLibrary(const QByteArray &chapter,
+                             const QByteArray &stickies,
+                             const QByteArray &darlings)
+{
+    QTemporaryDir temporary;
+    if (!temporary.isValid()) {
+        qFatal("Could not create temporary NEO Library fixture");
+    }
+
+    writeFile(QDir(temporary.path()).filePath("library.json"), R"json({
+  "authorName": "Ada Lovelace",
+  "penNames": ["Ada Lovelace", "A. L."],
+  "firstRunDone": true,
+  "pageTheme": "night",
+  "shelves": [{ "id": "shelf-1", "name": "Works in Progress", "bookIds": ["book-1"] }],
+  "futureLibraryField": { "keep": true }
+})json");
+    const QString bookPath = QDir(temporary.path()).filePath("book-1");
+    if (!QDir().mkpath(QDir(bookPath).filePath("chapters"))) {
+        qFatal("Could not create NEO book folder");
+    }
+    writeFile(QDir(bookPath).filePath("book.json"), R"json({
+  "id": "book-1",
+  "title": "First Title",
+  "subtitle": "A subtitle",
+  "series": "A series",
+  "author": "Ada Lovelace",
+  "wordGoal": 1200,
+  "created": "2026-09-01T00:00:00.000Z",
+  "modified": "2026-09-28T00:00:00.000Z",
+  "chapterOrder": ["chapter-a"],
+  "chapterTitles": { "chapter-a": "Arrival" },
+  "lastPosition": { "chapterId": "chapter-a", "scroll": 12 },
+  "futureBookField": { "keep": [1, "future"] }
+})json");
+    writeFile(QDir(bookPath).filePath("chapters/chapter-a.html"), chapter);
+    writeFile(QDir(bookPath).filePath("notes.html"), QByteArrayLiteral("<p>Library notes</p>"));
+    writeFile(QDir(bookPath).filePath("outline.html"), QByteArrayLiteral("<p>Library outline</p>"));
+    writeFile(QDir(bookPath).filePath("stickies.json"), stickies);
+    writeFile(QDir(bookPath).filePath("darlings.json"), darlings);
+    writeFile(QDir(bookPath).filePath("unknown-supporting-data.bin"),
+              QByteArray("\0future\xff", 8));
+    return temporary;
+}
+
 void writePreparedJournal(const QString &stateHome,
                           const QString &libraryPath,
                           const QString &relativePath,
@@ -226,6 +274,23 @@ void openSingleChapter(LibraryWindow *window)
     tree->setCurrentItem(chapter);
     emit tree->itemActivated(chapter, 0);
     QApplication::processEvents();
+}
+
+QAction *deviceHandoffAction(LibraryWindow *window)
+{
+    if (window->menuBar()->actions().isEmpty()) {
+        return nullptr;
+    }
+    QMenu *fileMenu = window->menuBar()->actions().first()->menu();
+    if (!fileMenu) {
+        return nullptr;
+    }
+    for (QAction *action : fileMenu->actions()) {
+        if (action->text() == QStringLiteral("Prepare Device Handoff…")) {
+            return action;
+        }
+    }
+    return nullptr;
 }
 
 }
@@ -668,6 +733,201 @@ private slots:
         QVERIFY(editor->isReadOnly());
         QVERIFY(state->text().contains(QStringLiteral("Device handoff")));
         QVERIFY(!QFileInfo::exists(chapterPath));
+    }
+
+    void prepareDeviceHandoffRequiresAnOpenLibrary()
+    {
+        LibraryWindow window;
+        window.show();
+        QApplication::processEvents();
+        QAction *handoffAction = deviceHandoffAction(&window);
+        QVERIFY(handoffAction);
+
+        bool noLibraryDialogWasAnswered = false;
+        bool handoffDialogWasShown = false;
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            if (dialog->windowTitle() == QStringLiteral("No Library open")) {
+                noLibraryDialogWasAnswered = true;
+                if (QAbstractButton *okButton = dialog->button(QMessageBox::Ok)) {
+                    okButton->click();
+                }
+            } else if (dialog->windowTitle() == QStringLiteral("Device handoff")) {
+                handoffDialogWasShown = true;
+                for (QAbstractButton *button : dialog->buttons()) {
+                    if (button->text() == QStringLiteral("Keep LEO Open")) {
+                        button->click();
+                        return;
+                    }
+                }
+            }
+        });
+        handoffAction->trigger();
+
+        QVERIFY(noLibraryDialogWasAnswered);
+        QVERIFY(!handoffDialogWasShown);
+        QVERIFY(window.isVisible());
+    }
+
+    void prepareDeviceHandoffSavesAndClosesNeoLibrary()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray protectedMarker(
+            "<p>Question <span class=\"ph-mark\" data-sid=\"s-existing\" "
+            "contenteditable=\"false\">⚑</span></p>");
+        const QByteArray futureMarkup(
+            "<div data-future=\"keep&amp;exact\"><span>future</span></div>");
+        const QByteArray originalChapter = QByteArrayLiteral("<p>Before prose.</p>") +
+                                           protectedMarker + futureMarkup +
+                                           QByteArrayLiteral("<p>After prose.</p>");
+        const QByteArray stickies(R"json([
+  {
+    "id": "s-existing",
+    "chapterId": "chapter-a",
+    "text": "keep this link",
+    "resolved": false,
+    "futureStickyField": { "keep": true }
+  }
+])json");
+        const QByteArray darlings(R"json([
+  {
+    "id": "d-existing",
+    "html": "<p>Saved line</p>",
+    "text": "Saved line",
+    "chapterId": "chapter-a",
+    "chapterLabel": "Chapter 1",
+    "anchorPrefix": "before",
+    "anchorSuffix": "after",
+    "date": "2026-09-20T00:00:00.000Z",
+    "futureDarlingField": { "keep": true }
+  }
+])json");
+        QTemporaryDir library = makeNeoLibrary(originalChapter, stickies, darlings);
+        QVERIFY(library.isValid());
+        QMap<QString, QByteArray> originalHashes = libraryFileHashes(library.path());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        QVERIFY(!editor->isReadOnly());
+        QString revisedText = editor->toPlainText();
+        revisedText.replace(QStringLiteral("Before prose."), QStringLiteral("Revised prose."));
+        editor->setPlainText(revisedText);
+
+        QAction *handoffAction = deviceHandoffAction(&window);
+        QVERIFY(handoffAction);
+
+        bool handoffDialogWasAnswered = false;
+        bool saveWasCompleteBeforeCloseChoice = false;
+        QString handoffDialogText;
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            handoffDialogText = dialog->text();
+            saveWasCompleteBeforeCloseChoice =
+                readFile(QDir(library.path()).filePath(
+                    QStringLiteral("book-1/chapters/chapter-a.html")))
+                    .contains(QByteArrayLiteral("Revised prose."));
+            for (QAbstractButton *button : dialog->buttons()) {
+                if (button->text() == QStringLiteral("Close LEO")) {
+                    handoffDialogWasAnswered = true;
+                    button->click();
+                    return;
+                }
+            }
+        });
+        handoffAction->trigger();
+
+        QVERIFY(handoffDialogWasAnswered);
+        QVERIFY(saveWasCompleteBeforeCloseChoice);
+        QVERIFY(handoffDialogText.contains(QStringLiteral("Syncthing")));
+        QVERIFY(handoffDialogText.contains(QStringLiteral("Up to Date")));
+        QVERIFY(handoffDialogText.contains(QStringLiteral("one device at a time")));
+        QVERIFY(!window.isVisible());
+
+        const QString chapterPath = QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html"));
+        const QByteArray savedChapter = readFile(chapterPath);
+        QVERIFY(savedChapter.contains(QByteArrayLiteral("Revised prose.")));
+        QVERIFY(savedChapter.contains(protectedMarker));
+        QVERIFY(savedChapter.contains(futureMarkup));
+        QMap<QString, QByteArray> savedHashes = libraryFileHashes(library.path());
+        originalHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        savedHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        QCOMPARE(savedHashes, originalHashes);
+
+        LibraryWindow reopened;
+        QVERIFY(reopened.openLibrary(library.path()));
+        openSingleChapter(&reopened);
+        editor = reopened.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        QVERIFY(editor->toPlainText().contains(QStringLiteral("Revised prose.")));
+    }
+
+    void prepareDeviceHandoffKeepsLeoOpenWhenSaveFails()
+    {
+        QTemporaryDir privateData;
+        QVERIFY(privateData.isValid());
+        const QString blockedStateHome = QDir(privateData.path()).filePath(
+            QStringLiteral("blocked-state-home"));
+        writeFile(blockedStateHome, QByteArrayLiteral("not a directory"));
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", blockedStateHome.toLocal8Bit());
+
+        const QByteArray savedBytes("<p>Saved paragraph.</p>");
+        QTemporaryDir sourceLibrary = makeSingleChapterLibrary(savedBytes);
+        QVERIFY(sourceLibrary.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(sourceLibrary.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *saveButton = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(saveButton);
+        editor->setPlainText(QStringLiteral("Draft that cannot be saved yet."));
+        QVERIFY(saveButton->isEnabled());
+
+        QAction *handoffAction = deviceHandoffAction(&window);
+        QVERIFY(handoffAction);
+
+        bool warningWasAnswered = false;
+        QString warningText;
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            if (!dialog || dialog->windowTitle() !=
+                               QStringLiteral("Device handoff is not ready")) {
+                return;
+            }
+            warningText = dialog->text();
+            if (QAbstractButton *okButton = dialog->button(QMessageBox::Ok)) {
+                warningWasAnswered = true;
+                okButton->click();
+            }
+        });
+        handoffAction->trigger();
+
+        QVERIFY(warningWasAnswered);
+        QVERIFY(warningText.contains(QStringLiteral("could not finish saving")));
+        QVERIFY(window.isVisible());
+        QVERIFY(editor->toPlainText().contains(
+            QStringLiteral("Draft that cannot be saved yet.")));
+        QCOMPARE(saveButton->text(), QStringLiteral("Retry Save"));
+        QCOMPARE(readFile(QDir(sourceLibrary.path()).filePath(
+                     QStringLiteral("book-1/chapters/chapter-a.html"))),
+                 savedBytes);
     }
 
     void editsSafeProseAroundProtectedContentWithoutChangingIt()
