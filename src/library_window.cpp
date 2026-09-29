@@ -29,6 +29,7 @@
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QInputMethodEvent>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -67,8 +68,51 @@ namespace {
 constexpr int ItemKindRole = Qt::UserRole + 1;
 constexpr int BookIdRole = Qt::UserRole + 2;
 constexpr int ChapterIdRole = Qt::UserRole + 3;
+constexpr int AuthorIdRole = Qt::UserRole + 4;
+constexpr int ShelfIdRole = Qt::UserRole + 5;
 constexpr int ChapterItemKind = 1;
 constexpr int OutlineItemKind = 2;
+
+class LibraryTreeWidget final : public QTreeWidget {
+public:
+    using DropHandler = std::function<void(
+        QTreeWidgetItem *, QTreeWidgetItem *, QAbstractItemView::DropIndicatorPosition)>;
+
+    explicit LibraryTreeWidget(QWidget *parent = nullptr) : QTreeWidget(parent) {}
+
+    void setDropHandler(DropHandler handler)
+    {
+        dropHandler_ = std::move(handler);
+    }
+
+protected:
+    void startDrag(Qt::DropActions supportedActions) override
+    {
+        draggedItem_ = currentItem();
+        QTreeWidget::startDrag(supportedActions);
+        draggedItem_ = nullptr;
+    }
+
+    void dropEvent(QDropEvent *event) override
+    {
+        if (!dropHandler_ || event->source() != this) {
+            event->ignore();
+            return;
+        }
+        QTreeWidgetItem *source = draggedItem_ ? draggedItem_ : currentItem();
+        QTreeWidgetItem *target = itemAt(event->position().toPoint());
+        if (!source || !target) {
+            event->ignore();
+            return;
+        }
+        dropHandler_(source, target, dropIndicatorPosition());
+        event->acceptProposedAction();
+    }
+
+private:
+    DropHandler dropHandler_;
+    QTreeWidgetItem *draggedItem_ = nullptr;
+};
 
 QString deviceHandoffGuidance()
 {
@@ -108,6 +152,7 @@ void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline)
     bookItem->setToolTip(0, book.title);
     bookItem->setToolTip(1, book.author);
     bookItem->setData(0, BookIdRole, book.id);
+    bookItem->setFlags(bookItem->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
 
     for (int index = 0; index < book.chapters.size(); ++index) {
         const Chapter &chapter = book.chapters.at(index);
@@ -120,12 +165,16 @@ void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline)
         chapterItem->setData(0, ItemKindRole, ChapterItemKind);
         chapterItem->setData(0, BookIdRole, book.id);
         chapterItem->setData(0, ChapterIdRole, chapter.id);
+        chapterItem->setFlags(chapterItem->flags() &
+                              ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
     }
     if (hasOutline) {
         auto *outlineItem = new QTreeWidgetItem(bookItem, {QStringLiteral("Outline")});
         outlineItem->setToolTip(0, QStringLiteral("Open the book outline"));
         outlineItem->setData(0, ItemKindRole, OutlineItemKind);
         outlineItem->setData(0, BookIdRole, book.id);
+        outlineItem->setFlags(outlineItem->flags() &
+                              ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
     }
 }
 
@@ -138,6 +187,37 @@ QTreeWidgetItem *findBookItem(QTreeWidgetItem *item, const QString &bookId)
     for (int childIndex = 0; childIndex < item->childCount(); ++childIndex) {
         if (QTreeWidgetItem *match = findBookItem(item->child(childIndex), bookId)) {
             return match;
+        }
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem *ancestorWithIdRole(QTreeWidgetItem *item, int role)
+{
+    for (QTreeWidgetItem *current = item; current; current = current->parent()) {
+        if (!current->data(0, role).toString().isEmpty()) {
+            return current;
+        }
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem *shelfAncestor(QTreeWidgetItem *item)
+{
+    return ancestorWithIdRole(item, ShelfIdRole);
+}
+
+QTreeWidgetItem *authorAncestor(QTreeWidgetItem *item)
+{
+    return ancestorWithIdRole(item, AuthorIdRole);
+}
+
+QTreeWidgetItem *bookAncestor(QTreeWidgetItem *item)
+{
+    for (QTreeWidgetItem *current = item; current; current = current->parent()) {
+        if (current->data(0, ItemKindRole).toInt() == 0 &&
+            !current->data(0, BookIdRole).toString().isEmpty()) {
+            return current;
         }
     }
     return nullptr;
@@ -861,14 +941,30 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     onboardingButtons->addWidget(submitOnboarding);
     onboardingLayout->addLayout(onboardingButtons);
 
-    tree_ = new QTreeWidget(pages_);
+    libraryPage_ = new QWidget(pages_);
+    auto *libraryLayout = new QVBoxLayout(libraryPage_);
+    auto *libraryTree = new LibraryTreeWidget(libraryPage_);
+    tree_ = libraryTree;
     tree_->setObjectName(QStringLiteral("library-tree"));
     tree_->setAccessibleName(QStringLiteral("Library shelves, books, and chapters"));
     tree_->setColumnCount(2);
     tree_->setHeaderLabels({QStringLiteral("Library"), QStringLiteral("Book author")});
     tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    tree_->setDragEnabled(false);
-    tree_->setAcceptDrops(false);
+    tree_->setDragEnabled(true);
+    tree_->setAcceptDrops(true);
+    tree_->viewport()->setAcceptDrops(true);
+    tree_->setDragDropMode(QAbstractItemView::InternalMove);
+    tree_->setDefaultDropAction(Qt::MoveAction);
+    tree_->setDropIndicatorShown(true);
+    tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tree_, &QWidget::customContextMenuRequested,
+            this, &LibraryWindow::showOrganizationContextMenu);
+    libraryTree->setDropHandler([this](QTreeWidgetItem *source, QTreeWidgetItem *target,
+                                       QAbstractItemView::DropIndicatorPosition position) {
+        handleLibraryDrop(source, target, position);
+    });
+    libraryLayout->addWidget(tree_, 1);
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem *item, int) {
                 if (item && item->data(0, ItemKindRole).toInt() == OutlineItemKind) {
@@ -888,7 +984,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     backButton->setAccessibleName(QStringLiteral("Return to Library"));
     connect(backButton, &QPushButton::clicked, this, [this] {
         if (savePendingEdits()) {
-            pages_->setCurrentWidget(tree_);
+            pages_->setCurrentWidget(libraryPage_);
             statusBar()->showMessage(QStringLiteral("Library open: %1").arg(activeLibraryPath_));
         }
     });
@@ -978,7 +1074,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
 
     pages_->addWidget(welcomePage_);
     pages_->addWidget(onboardingPage_);
-    pages_->addWidget(tree_);
+    pages_->addWidget(libraryPage_);
     pages_->addWidget(editorPage_);
     pages_->addWidget(refusalPage_);
     setCentralWidget(centralPage);
@@ -1121,6 +1217,8 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!savePendingEdits()) {
         return false;
     }
+    organization_.reset();
+    activeLibraryPath_.clear();
     if (canonicalOrCleanPath(path) != canonicalOrCleanPath(recoveredLibraryPath_)) {
         recoveredLibraryPath_.clear();
         openRecoveredLibraryButton_->hide();
@@ -1147,6 +1245,33 @@ bool LibraryWindow::openLibrary(const QString &path)
         return false;
     }
 
+    const LibraryReadResult beforeOrganizationRecovery = LibraryReader::read(path);
+    if (!beforeOrganizationRecovery.ok()) {
+        qWarning().noquote() << "Library open refused:" << beforeOrganizationRecovery.error;
+        activeLibraryPath_.clear();
+        refusal_->setText(QStringLiteral(
+            "LEO refused to open this Library. It made no Library changes.\n\n%1\n\n%2")
+                              .arg(beforeOrganizationRecovery.error, deviceHandoffGuidance()));
+        pages_->setCurrentWidget(refusalPage_);
+        statusBar()->showMessage(QStringLiteral("No Library open"));
+        return false;
+    }
+
+    auto organization = std::make_unique<LibraryOrganization>(
+        beforeOrganizationRecovery.library.path);
+    QString organizationError;
+    if (!organization->load(&organizationError)) {
+        qWarning().noquote() << "Library organization recovery paused:" << organizationError;
+        activeLibraryPath_.clear();
+        refusal_->setText(QStringLiteral(
+            "LEO could not recover or prepare safe Library organization changes. It made no "
+            "partial Library change.\n\n%1\n\n%2")
+                              .arg(organizationError, deviceHandoffGuidance()));
+        pages_->setCurrentWidget(refusalPage_);
+        statusBar()->showMessage(QStringLiteral("Library organization recovery paused"));
+        return false;
+    }
+
     const LibraryReadResult result = LibraryReader::read(path);
     if (!result.ok()) {
         qWarning().noquote() << "Library open refused:" << result.error;
@@ -1166,31 +1291,11 @@ bool LibraryWindow::openLibrary(const QString &path)
     }
 
     activeLibraryPath_ = result.library.path;
+    organization_ = std::move(organization);
     applyPreferences(result.library.preferences);
     activeDocumentIsOutline_ = false;
-    for (const Author &author : result.library.authors) {
-        auto *authorItem = new QTreeWidgetItem(tree_, {author.name});
-        for (const Shelf &shelf : author.shelves) {
-            auto *shelfItem = new QTreeWidgetItem(authorItem, {shelf.name});
-            for (const Book &book : shelf.books) {
-                const QString outlinePath = QDir(result.library.path)
-                                                .filePath(book.id + QStringLiteral("/outline.html"));
-                addBook(shelfItem, book, QFileInfo::exists(outlinePath));
-            }
-        }
-    }
-
-    if (!result.library.unfiledBooks.isEmpty()) {
-        auto *unfiled = new QTreeWidgetItem(tree_, {QStringLiteral("Unfiled books")});
-        for (const Book &book : result.library.unfiledBooks) {
-            const QString outlinePath = QDir(result.library.path)
-                                            .filePath(book.id + QStringLiteral("/outline.html"));
-            addBook(unfiled, book, QFileInfo::exists(outlinePath));
-        }
-    }
-
-    tree_->expandAll();
-    pages_->setCurrentWidget(tree_);
+    populateLibraryTree(result.library);
+    pages_->setCurrentWidget(libraryPage_);
     QString status = recovery.recovered
                          ? QStringLiteral("Interrupted save recovered; review chapter")
                          : QStringLiteral("Library open: %1").arg(result.library.path);
@@ -1232,6 +1337,425 @@ bool LibraryWindow::openLibrary(const QString &path)
         }
     }
     return true;
+}
+
+void LibraryWindow::populateLibraryTree(const Library &library)
+{
+    tree_->clear();
+    const auto addBooks = [&library](QTreeWidgetItem *parent, const QVector<Book> &books) {
+        for (const Book &book : books) {
+            const QString outlinePath = QDir(library.path)
+                                            .filePath(book.id + QStringLiteral("/outline.html"));
+            addBook(parent, book, QFileInfo::exists(outlinePath));
+        }
+    };
+    for (const Author &author : library.authors) {
+        auto *authorItem = new QTreeWidgetItem(tree_, {author.name});
+        authorItem->setData(0, AuthorIdRole, author.id);
+        authorItem->setFlags((authorItem->flags() & ~Qt::ItemIsDragEnabled) |
+                             Qt::ItemIsDropEnabled);
+        for (const Shelf &shelf : author.shelves) {
+            auto *shelfItem = new QTreeWidgetItem(authorItem, {shelf.name});
+            shelfItem->setData(0, ShelfIdRole, shelf.id);
+            shelfItem->setFlags(shelfItem->flags() | Qt::ItemIsDragEnabled |
+                                Qt::ItemIsDropEnabled);
+            addBooks(shelfItem, shelf.books);
+        }
+    }
+
+    if (!library.unfiledBooks.isEmpty()) {
+        auto *unfiled = new QTreeWidgetItem(tree_, {QStringLiteral("Unfiled books")});
+        unfiled->setFlags(unfiled->flags() &
+                          ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
+        addBooks(unfiled, library.unfiledBooks);
+    }
+    tree_->expandAll();
+}
+
+bool LibraryWindow::refreshOrganizationView()
+{
+    const QString path = activeLibraryPath_;
+    if (path.isEmpty() || !openLibrary(path)) {
+        return false;
+    }
+    pages_->setCurrentWidget(libraryPage_);
+    tree_->setFocus();
+    return true;
+}
+
+void LibraryWindow::finishOrganizationChange(const LibraryOrganizationResult &result,
+                                            const QString &successMessage)
+{
+    const bool refreshed = refreshOrganizationView();
+    if (!result.ok) {
+        if (!refreshed) {
+            organization_.reset();
+        }
+        QMessageBox::warning(
+            this, QStringLiteral("Library change paused"),
+            QStringLiteral("%1\n\nLEO reopened the Library to recover or inspect its saved state.")
+                .arg(result.error));
+        return;
+    }
+    if (!refreshed) {
+        QMessageBox::warning(
+            this, QStringLiteral("Library needs inspection"),
+            QStringLiteral("The change was saved, but LEO could not reopen the Library. Open it again to inspect the saved state."));
+        return;
+    }
+    statusBar()->showMessage(successMessage, 5000);
+}
+
+void LibraryWindow::createBookFromSelection()
+{
+    if (!organization_) {
+        return;
+    }
+
+    QTreeWidgetItem *selected = tree_->currentItem();
+    QTreeWidgetItem *shelf = shelfAncestor(selected);
+    if (!shelf && selected && selected->data(0, AuthorIdRole).isValid() &&
+        selected->childCount() > 0) {
+        shelf = selected->child(0);
+    }
+    if (!shelf) {
+        const QJsonArray shelves = organization_->metadata()
+                                       .value(QStringLiteral("shelves")).toArray();
+        if (!shelves.isEmpty()) {
+            const QString shelfId = shelves.first().toObject()
+                                        .value(QStringLiteral("id")).toString();
+            for (int authorIndex = 0; authorIndex < tree_->topLevelItemCount() && !shelf;
+                 ++authorIndex) {
+                QTreeWidgetItem *author = tree_->topLevelItem(authorIndex);
+                for (int shelfIndex = 0; shelfIndex < author->childCount(); ++shelfIndex) {
+                    QTreeWidgetItem *candidate = author->child(shelfIndex);
+                    if (candidate->data(0, ShelfIdRole).toString() == shelfId) {
+                        shelf = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!shelf) {
+        QMessageBox::information(this, QStringLiteral("Add a shelf first"),
+                                 QStringLiteral("Create a shelf before adding a book."));
+        return;
+    }
+
+    bool accepted = false;
+    const QString title = QInputDialog::getText(
+        this, QStringLiteral("New book"), QStringLiteral("Book title:"),
+        QLineEdit::Normal, QStringLiteral("Untitled"), &accepted);
+    if (!accepted) {
+        return;
+    }
+    finishOrganizationChange(
+        organization_->createBook(shelf->data(0, ShelfIdRole).toString(), title),
+        QStringLiteral("Book created."));
+}
+
+void LibraryWindow::manageAuthor(const QString &authorId, const QPoint &globalPosition)
+{
+    if (!organization_ || authorId.isEmpty()) {
+        return;
+    }
+    QTreeWidgetItem *authorItem = nullptr;
+    for (int index = 0; index < tree_->topLevelItemCount(); ++index) {
+        QTreeWidgetItem *item = tree_->topLevelItem(index);
+        if (item->data(0, AuthorIdRole).toString() == authorId) {
+            authorItem = item;
+            break;
+        }
+    }
+    if (!authorItem) {
+        return;
+    }
+
+    QMenu menu(this);
+    const QString name = authorItem->text(0);
+    const QString currentId = organization_->metadata()
+                                  .value(QStringLiteral("currentAuthorId")).toString();
+    QAction *writeAs = menu.addAction(currentId == authorId
+                                          ? QStringLiteral("Currently writing as %1").arg(name)
+                                          : QStringLiteral("Write as %1").arg(name));
+    writeAs->setEnabled(currentId != authorId);
+    QAction *rename = menu.addAction(QStringLiteral("Rename %1…").arg(name));
+    QAction *newShelf = menu.addAction(QStringLiteral("Add a shelf…"));
+    QAction *add = menu.addAction(QStringLiteral("Add a pen name…"));
+    QAction *remove = nullptr;
+    if (tree_->topLevelItemCount() > 1) {
+        remove = menu.addAction(QStringLiteral("Remove %1…").arg(name));
+    }
+    QAction *chosen = menu.exec(globalPosition);
+    if (!chosen) {
+        return;
+    }
+
+    if (chosen == writeAs) {
+        finishOrganizationChange(organization_->setCurrentAuthor(authorId),
+                                 QStringLiteral("Writing as %1.").arg(name));
+        return;
+    }
+    if (chosen == rename) {
+        bool accepted = false;
+        const QString updatedName = QInputDialog::getText(
+            this, QStringLiteral("Rename pen name"), QStringLiteral("Name:"),
+            QLineEdit::Normal, name, &accepted);
+        if (accepted) {
+            finishOrganizationChange(organization_->renameAuthor(authorId, updatedName),
+                                     QStringLiteral("Pen name renamed."));
+        }
+        return;
+    }
+    if (chosen == newShelf) {
+        bool accepted = false;
+        const QString shelfName = QInputDialog::getText(
+            this, QStringLiteral("New shelf"), QStringLiteral("Shelf name:"),
+            QLineEdit::Normal, QStringLiteral("New Shelf"), &accepted);
+        if (accepted) {
+            finishOrganizationChange(organization_->addShelf(authorId, shelfName),
+                                     QStringLiteral("Shelf created."));
+        }
+        return;
+    }
+    if (chosen == add) {
+        bool accepted = false;
+        const QString newName = QInputDialog::getText(
+            this, QStringLiteral("Add a pen name"), QStringLiteral("Name:"),
+            QLineEdit::Normal, QString(), &accepted);
+        if (accepted) {
+            finishOrganizationChange(organization_->addAuthor(newName),
+                                     QStringLiteral("Pen name added with a new shelf."));
+        }
+        return;
+    }
+    if (chosen != remove) {
+        return;
+    }
+
+    QStringList targetLabels;
+    QStringList targetIds;
+    for (int index = 0; index < tree_->topLevelItemCount(); ++index) {
+        QTreeWidgetItem *candidate = tree_->topLevelItem(index);
+        const QString id = candidate->data(0, AuthorIdRole).toString();
+        if (id == authorId || id.isEmpty()) {
+            continue;
+        }
+        targetIds.append(id);
+        targetLabels.append(QStringLiteral("%1 (%2)").arg(candidate->text(0), id));
+    }
+    if (targetLabels.isEmpty()) {
+        return;
+    }
+    bool accepted = false;
+    const QString target = QInputDialog::getItem(
+        this, QStringLiteral("Reassign books"),
+        QStringLiteral("Move this pen name’s shelves to:"), targetLabels, 0, false,
+        &accepted);
+    if (!accepted) {
+        return;
+    }
+    const int targetIndex = targetLabels.indexOf(target);
+    if (targetIndex < 0 ||
+        QMessageBox::question(
+            this, QStringLiteral("Remove pen name"),
+            QStringLiteral("Its shelves and books will move to %1. Book folders remain in the Library.")
+                .arg(targetLabels.at(targetIndex)),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+    finishOrganizationChange(organization_->removeAuthor(authorId, targetIds.at(targetIndex)),
+                             QStringLiteral("Pen name removed; its books were kept."));
+}
+
+void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
+{
+    if (!organization_) {
+        return;
+    }
+    QTreeWidgetItem *item = tree_->itemAt(position);
+    if (!item) {
+        return;
+    }
+    tree_->setCurrentItem(item);
+
+    const QString authorId = item->data(0, AuthorIdRole).toString();
+    if (!authorId.isEmpty()) {
+        manageAuthor(authorId, tree_->viewport()->mapToGlobal(position));
+        return;
+    }
+
+    const QString shelfId = item->data(0, ShelfIdRole).toString();
+    if (!shelfId.isEmpty()) {
+        QMenu menu(this);
+        QAction *newBook = menu.addAction(QStringLiteral("Add a book…"));
+        QAction *rename = menu.addAction(QStringLiteral("Rename shelf…"));
+        QAction *remove = menu.addAction(QStringLiteral("Delete shelf…"));
+        QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
+        if (chosen == newBook) {
+            createBookFromSelection();
+        } else if (chosen == rename) {
+            bool accepted = false;
+            const QString name = QInputDialog::getText(
+                this, QStringLiteral("Rename shelf"), QStringLiteral("Shelf name:"),
+                QLineEdit::Normal, item->text(0), &accepted);
+            if (accepted) {
+                finishOrganizationChange(organization_->renameShelf(shelfId, name),
+                                         QStringLiteral("Shelf renamed."));
+            }
+        } else if (chosen == remove &&
+                   QMessageBox::question(
+                       this, QStringLiteral("Delete shelf"),
+                       QStringLiteral("Books on this shelf will move to another shelf under the same pen name."),
+                       QMessageBox::Yes | QMessageBox::Cancel,
+                       QMessageBox::Cancel) == QMessageBox::Yes) {
+            finishOrganizationChange(organization_->removeShelf(shelfId),
+                                     QStringLiteral("Shelf deleted; its books were kept."));
+        }
+        return;
+    }
+
+    if (item->data(0, ItemKindRole).toInt() != 0) {
+        return;
+    }
+    const QString bookId = item->data(0, BookIdRole).toString();
+    if (bookId.isEmpty()) {
+        return;
+    }
+    QMenu menu(this);
+    QAction *rename = menu.addAction(QStringLiteral("Rename book…"));
+    QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
+    QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
+    QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
+    if (chosen == rename) {
+        bool accepted = false;
+        const QString title = QInputDialog::getText(
+            this, QStringLiteral("Rename book"), QStringLiteral("Book title:"),
+            QLineEdit::Normal, item->text(0), &accepted);
+        if (accepted) {
+            finishOrganizationChange(organization_->renameBook(bookId, title),
+                                     QStringLiteral("Book renamed."));
+        }
+    } else if (chosen == remove &&
+               QMessageBox::question(
+                   this, QStringLiteral("Remove from shelves"),
+                   QStringLiteral("The book folder will stay in the Library and appear under Unfiled books."),
+                   QMessageBox::Yes | QMessageBox::Cancel,
+                   QMessageBox::Cancel) == QMessageBox::Yes) {
+        finishOrganizationChange(organization_->removeBookFromShelves(bookId),
+                                 QStringLiteral("Book removed from shelves."));
+    } else if (chosen == trash &&
+               QMessageBox::question(
+                   this, QStringLiteral("Move book to Trash"),
+                   QStringLiteral("Move the complete book folder to the system Trash?"),
+                   QMessageBox::Yes | QMessageBox::Cancel,
+                   QMessageBox::Cancel) == QMessageBox::Yes) {
+        finishOrganizationChange(organization_->moveBookToTrash(bookId),
+                                 QStringLiteral("Book moved to Trash."));
+    }
+}
+
+void LibraryWindow::handleLibraryDrop(
+    QTreeWidgetItem *source, QTreeWidgetItem *target,
+    QAbstractItemView::DropIndicatorPosition position)
+{
+    if (!organization_ || !source || !target || source == target ||
+        source->data(0, ItemKindRole).toInt() != 0) {
+        return;
+    }
+
+    const QString shelfId = source->data(0, ShelfIdRole).toString();
+    if (!shelfId.isEmpty()) {
+        if (shelfAncestor(target) == source) {
+            return;
+        }
+        QTreeWidgetItem *sourceAuthor = authorAncestor(source);
+        QTreeWidgetItem *destinationAuthor = authorAncestor(target);
+        QTreeWidgetItem *targetShelf = shelfAncestor(target);
+        if (!sourceAuthor || !destinationAuthor || sourceAuthor != destinationAuthor) {
+            return;
+        }
+        int index = 0;
+        const int childCount = destinationAuthor->childCount();
+        if (target == destinationAuthor) {
+            for (int childIndex = 0; childIndex < childCount; ++childIndex) {
+                if (!destinationAuthor->child(childIndex)->data(0, ShelfIdRole).toString().isEmpty() &&
+                    destinationAuthor->child(childIndex) != source) {
+                    ++index;
+                }
+            }
+        } else if (targetShelf) {
+            for (int childIndex = 0; childIndex < childCount; ++childIndex) {
+                QTreeWidgetItem *candidate = destinationAuthor->child(childIndex);
+                if (candidate == source || candidate->data(0, ShelfIdRole).toString().isEmpty()) {
+                    continue;
+                }
+                if (candidate == targetShelf) {
+                    if (position == QAbstractItemView::AboveItem) {
+                        break;
+                    }
+                    ++index;
+                    break;
+                }
+                ++index;
+            }
+        } else {
+            return;
+        }
+        finishOrganizationChange(
+            organization_->moveShelf(shelfId,
+                                     destinationAuthor->data(0, AuthorIdRole).toString(), index),
+            QStringLiteral("Shelf moved."));
+        return;
+    }
+
+    const QString bookId = source->data(0, BookIdRole).toString();
+    if (bookId.isEmpty()) {
+        return;
+    }
+    QTreeWidgetItem *destinationShelf = shelfAncestor(target);
+    if (!destinationShelf && !authorAncestor(target)) {
+        return;
+    }
+    if (!destinationShelf) {
+        QTreeWidgetItem *destinationAuthor = authorAncestor(target);
+        for (int index = 0; destinationAuthor && index < destinationAuthor->childCount(); ++index) {
+            if (!destinationAuthor->child(index)->data(0, ShelfIdRole).toString().isEmpty()) {
+                destinationShelf = destinationAuthor->child(index);
+                break;
+            }
+        }
+    }
+    if (!destinationShelf) {
+        return;
+    }
+
+    QTreeWidgetItem *targetBook = bookAncestor(target);
+    if (targetBook == source) {
+        return;
+    }
+    int index = 0;
+    for (int childIndex = 0; childIndex < destinationShelf->childCount(); ++childIndex) {
+        QTreeWidgetItem *candidate = destinationShelf->child(childIndex);
+        const QString candidateId = candidate->data(0, BookIdRole).toString();
+        if (candidate == source || candidateId.isEmpty() ||
+            candidate->data(0, ItemKindRole).toInt() != 0) {
+            continue;
+        }
+        if (candidate == targetBook) {
+            if (position == QAbstractItemView::AboveItem) {
+                break;
+            }
+            ++index;
+            break;
+        }
+        ++index;
+    }
+    finishOrganizationChange(
+        organization_->moveBook(bookId,
+                                destinationShelf->data(0, ShelfIdRole).toString(), index),
+        QStringLiteral("Book moved."));
 }
 
 bool LibraryWindow::openChapter(QTreeWidgetItem *item)

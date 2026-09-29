@@ -10,6 +10,7 @@ add_library(leo_library_browser STATIC
   font_preferences.cpp
   legacy_chapter_codec.cpp
   library_creator.cpp
+  library_organization.cpp
   library_persistence.cpp
   library_reader.cpp
   library_window.cpp

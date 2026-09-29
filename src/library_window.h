@@ -1,9 +1,14 @@
 #pragma once
 
-#include <QByteArray>
 #include <QMainWindow>
+#include <QByteArray>
+#include <QAbstractItemView>
+#include <QPoint>
+
+#include <memory>
 
 #include "legacy_chapter_codec.h"
+#include "library_organization.h"
 #include "library_reader.h"
 
 class QLabel;
@@ -32,6 +37,15 @@ private:
     void beginNewLibrary();
     void createNewLibrary();
     void chooseLibrary();
+    void createBookFromSelection();
+    void manageAuthor(const QString &authorId, const QPoint &globalPosition);
+    void showOrganizationContextMenu(const QPoint &position);
+    void handleLibraryDrop(QTreeWidgetItem *source, QTreeWidgetItem *target,
+                           QAbstractItemView::DropIndicatorPosition position);
+    void finishOrganizationChange(const LibraryOrganizationResult &result,
+                                  const QString &successMessage);
+    bool refreshOrganizationView();
+    void populateLibraryTree(const Library &library);
     bool openChapter(QTreeWidgetItem *item);
     bool openOutline(QTreeWidgetItem *item);
     bool openDocument(const QString &relativePath,
@@ -59,7 +73,9 @@ private:
     QLabel *recoveryNotice_ = nullptr;
     QPushButton *openRecoveredLibraryButton_ = nullptr;
     QPushButton *openRecoveredFromRefusalButton_ = nullptr;
+    QWidget *libraryPage_ = nullptr;
     QTreeWidget *tree_ = nullptr;
+    std::unique_ptr<LibraryOrganization> organization_;
     QWidget *editorPage_ = nullptr;
     QLabel *editorTitle_ = nullptr;
     QLabel *editorState_ = nullptr;

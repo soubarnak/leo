@@ -718,6 +718,24 @@ private slots:
         QCOMPARE(libraryFileHashes(library.path()), originalHashes);
     }
 
+    void libraryBrowserExposesContextOrganizationAndDragReordering()
+    {
+        QTemporaryDir library = makeLibrary();
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        window.show();
+        QApplication::processEvents();
+
+        auto *tree = window.findChild<QTreeWidget *>("library-tree");
+        QVERIFY(tree);
+        QVERIFY(tree->dragEnabled());
+        QCOMPARE(tree->dragDropMode(), QAbstractItemView::InternalMove);
+        QCOMPARE(tree->contextMenuPolicy(), Qt::CustomContextMenu);
+        QVERIFY(!window.findChild<QPushButton *>("library-new-book"));
+        QVERIFY(!window.findChild<QPushButton *>("library-new-shelf"));
+        QVERIFY(!window.findChild<QPushButton *>("library-pen-names"));
+    }
+
     void refusesMissingOrCorruptLibraryWithoutShowingEmptyLibrary()
     {
         QTemporaryDir temporary;
