@@ -621,8 +621,14 @@ void encodeEditableGroup(const QVector<LegacyChapterFragment> &original,
         if (fragment) {
             output->append(fragment->sourcePrefix.toUtf8());
         }
-        const QString openingTag = fragment ? fragment->openingTag : QStringLiteral("<p>");
-        const QString closingTag = fragment ? fragment->closingTag : QStringLiteral("</p>");
+        const bool preserveSceneBreak = fragment && fragment->sceneBreak &&
+                                         edited.at(index) == QStringLiteral("***");
+        const QString openingTag = fragment && (!fragment->sceneBreak || preserveSceneBreak)
+                                       ? fragment->openingTag
+                                       : QStringLiteral("<p>");
+        const QString closingTag = fragment && (!fragment->sceneBreak || preserveSceneBreak)
+                                       ? fragment->closingTag
+                                       : QStringLiteral("</p>");
         output->append(openingTag.toUtf8());
         if (edited.at(index).isEmpty()) {
             output->append("<br>");
@@ -730,11 +736,21 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
             const QString body = html.mid(root.end, closingStart - root.end);
             QString prose;
             QString bodyError;
+            const QStringList rootClasses = classes(root);
+            const bool plainSceneBreak = root.attributes.size() == 1 &&
+                rootClasses == QStringList{QStringLiteral("scene-break")} && body == QStringLiteral("***");
             const bool emptyBreak = body == QStringLiteral("<br>") ||
                                     body == QStringLiteral("<br/>") ||
                                     body == QStringLiteral("<br />");
             const bool plainBody = emptyBreak || decodePlainText(body, &prose, &bodyError);
-            if (root.attributes.isEmpty() && plainBody) {
+            if (plainSceneBreak) {
+                fragment.kind = LegacyChapterContentKind::Supported;
+                fragment.text = QStringLiteral("***");
+                fragment.sceneBreak = true;
+                fragment.sourcePrefix = pendingSource;
+                fragment.openingTag = html.mid(offset, root.end - offset);
+                fragment.closingTag = html.mid(closingStart, end - closingStart);
+            } else if (root.attributes.isEmpty() && plainBody) {
                 fragment.kind = LegacyChapterContentKind::Supported;
                 fragment.text = emptyBreak ? QString() : prose;
                 fragment.sourcePrefix = pendingSource;
@@ -908,6 +924,8 @@ QByteArray LegacyChapterCodec::encode(const QString &text, bool hasUtf8Bom, QStr
     for (const QString &paragraph : paragraphs) {
         if (paragraph.isEmpty()) {
             html.append("<p><br></p>");
+        } else if (paragraph == QStringLiteral("***")) {
+            html.append("<p class=\"scene-break\">***</p>");
         } else {
             html.append("<p>");
             html.append(escapeHtmlText(paragraph).toUtf8());

@@ -20,6 +20,7 @@ struct LegacyChapterFragment {
     QString openingTag;
     QString closingTag;
     QString rawSource;
+    bool sceneBreak = false;
 };
 
 struct LegacyChapterRecordLinks {

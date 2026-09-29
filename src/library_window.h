@@ -6,12 +6,14 @@
 
 #include <memory>
 
+#include "chapter_structure.h"
 #include "legacy_chapter_codec.h"
 #include "library_organization.h"
 #include "library_reader.h"
 
 class QLabel;
 class QComboBox;
+class QAction;
 class QLineEdit;
 class QPlainTextEdit;
 class QSyntaxHighlighter;
@@ -46,18 +48,34 @@ private:
     void createBookFromSelection();
     void manageAuthor(const QString &authorId, const QPoint &globalPosition);
     void showOrganizationContextMenu(const QPoint &position);
+    void showChapterStructureMenu(QTreeWidgetItem *item, const QPoint &globalPosition);
     void handleLibraryDrop(QTreeWidgetItem *source, QTreeWidgetItem *target,
                            LibraryDropPosition position);
     void finishOrganizationChange(const LibraryOrganizationResult &result,
                                   const QString &successMessage);
     bool refreshOrganizationView();
     void populateLibraryTree(const Library &library);
-    bool openChapter(QTreeWidgetItem *item);
+    bool openChapter(QTreeWidgetItem *item, bool quietStatus = false);
+    void navigateChapter(int direction);
+    void updateChapterNavigation();
     bool openOutline(QTreeWidgetItem *item);
     bool openDocument(const QString &relativePath,
                       const QString &title,
                       const LegacyChapterLinkContext &links,
-                      bool outline);
+                      bool outline,
+                      bool quietStatus = false);
+    bool ensureChapterStructure(const QString &bookId);
+    void splitActiveChapter(const QString &text, int position,
+                            bool notify = true);
+    void applyChapterStructureResult(const ChapterStructureResult &result,
+                                    const QString &bookId,
+                                    const QString &successMessage,
+                                    bool notify = true);
+    bool refreshChapterStructureView(const QString &bookId, const QString &chapterId,
+                                     bool notify);
+    void updateChapterStructureActions();
+    void undoChapterStructure();
+    void redoChapterStructure();
     void applyPreferences(const LibraryPreferences &preferences);
     bool saveCurrentChapter();
     bool savePendingEdits();
@@ -82,8 +100,14 @@ private:
     QWidget *libraryPage_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     std::unique_ptr<LibraryOrganization> organization_;
+    std::unique_ptr<ChapterStructure> chapterStructure_;
+    QString structureBookId_;
+    QAction *undoStructureAction_ = nullptr;
+    QAction *redoStructureAction_ = nullptr;
     QWidget *editorPage_ = nullptr;
     QLabel *editorTitle_ = nullptr;
+    QPushButton *previousChapterButton_ = nullptr;
+    QPushButton *nextChapterButton_ = nullptr;
     QLabel *editorState_ = nullptr;
     QPlainTextEdit *chapterEditor_ = nullptr;
     QSyntaxHighlighter *dropCapHighlighter_ = nullptr;
@@ -99,6 +123,7 @@ private:
     QString recoveredLibraryPath_;
     QString conflictDraftPath_;
     QString activeChapterRelativePath_;
+    QString activeBookId_;
     LibraryPreferences activePreferences_;
     QString preferenceNotice_;
     QByteArray sourceHash_;

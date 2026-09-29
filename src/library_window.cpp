@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QColor>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -40,6 +41,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
@@ -432,6 +434,13 @@ public:
 protected:
     void highlightBlock(const QString &text) override
     {
+        if (text.trimmed() == QStringLiteral("***")) {
+            QTextCharFormat sceneBreak;
+            sceneBreak.setForeground(QColor(QStringLiteral("#8a8178")));
+            sceneBreak.setFontWeight(QFont::DemiBold);
+            setFormat(0, text.size(), sceneBreak);
+            return;
+        }
         for (QTextBlock previous = currentBlock().previous(); previous.isValid();
              previous = previous.previous()) {
             if (!previous.text().trimmed().isEmpty()) {
@@ -454,6 +463,8 @@ private:
 
 class ProtectedChapterEditor final : public QPlainTextEdit {
 public:
+    using SplitHandler = std::function<void(const QString &, int)>;
+
     explicit ProtectedChapterEditor(QWidget *parent = nullptr)
         : QPlainTextEdit(parent)
     {
@@ -465,9 +476,17 @@ public:
     void setProtectedTokens(const QStringList &tokens)
     {
         protectedTokens_ = tokens;
+        enterRun_ = 0;
         protectionContext_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
         copiedSource_.clear();
         primarySelection_.clear();
+    }
+
+    void refreshProtectedTokens(const QStringList &tokens)
+    {
+        if (protectedTokens_ != tokens) {
+            setProtectedTokens(tokens);
+        }
     }
 
     void setRefusalHandler(std::function<void()> handler)
@@ -475,11 +494,50 @@ public:
         refusalHandler_ = std::move(handler);
     }
 
+    void setSplitHandler(SplitHandler handler)
+    {
+        splitHandler_ = std::move(handler);
+    }
+
 protected:
     void keyPressEvent(QKeyEvent *event) override
     {
         const QTextCursor cursor = textCursor();
         const bool selectionTouches = selectionTouchesProtected(cursor);
+        const bool plainEnter = (event->key() == Qt::Key_Return ||
+                                 event->key() == Qt::Key_Enter) &&
+            !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier |
+                                    Qt::AltModifier | Qt::MetaModifier));
+        if (!plainEnter) {
+            enterRun_ = 0;
+        } else if (selectionTouches || cursorInsideProtected(cursor.position())) {
+            enterRun_ = 0;
+        } else if (enterRun_ == 1 && cursor.block().text().isEmpty() &&
+                   cursor.block().previous().isValid() &&
+                   cursor.block().previous().text() != QStringLiteral("***")) {
+            QTextCursor marker = cursor;
+            marker.insertText(QStringLiteral("***"));
+            marker.insertBlock();
+            setTextCursor(marker);
+            enterRun_ = 2;
+            event->accept();
+            return;
+        } else if (enterRun_ >= 2 && cursor.block().text().isEmpty() &&
+                   cursor.block().previous().text() == QStringLiteral("***")) {
+            const QTextBlock markerBlock = cursor.block().previous();
+            const int markerStart = markerBlock.position();
+            const int splitPosition = markerStart > 0 ? markerStart - 1 : 0;
+            const int suffixStart = cursor.block().position();
+            const QString originalText = toPlainText();
+            const QString splitText = originalText.left(splitPosition) +
+                                      originalText.mid(suffixStart);
+            enterRun_ = 0;
+            if (splitHandler_) {
+                splitHandler_(splitText, splitPosition);
+            }
+            event->accept();
+            return;
+        }
         bool refuse = false;
 
         if (event->matches(QKeySequence::Copy)) {
@@ -510,11 +568,21 @@ protected:
         }
 
         if (refuse) {
+            enterRun_ = 0;
             reportRefusal();
             event->accept();
             return;
         }
+        if (plainEnter) {
+            enterRun_ = (enterRun_ >= 2) ? 0 : enterRun_ + 1;
+        }
         QPlainTextEdit::keyPressEvent(event);
+    }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        enterRun_ = 0;
+        QPlainTextEdit::mousePressEvent(event);
     }
 
     void inputMethodEvent(QInputMethodEvent *event) override
@@ -739,10 +807,12 @@ private:
     }
 
     QStringList protectedTokens_;
+    int enterRun_ = 0;
     QString protectionContext_;
     ClipboardProvenance copiedSource_;
     ClipboardProvenance primarySelection_;
     std::function<void()> refusalHandler_;
+    SplitHandler splitHandler_;
 };
 
 class HoverFadeFilter final : public QObject {
@@ -1007,6 +1077,16 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     editorTitle_->setObjectName(QStringLiteral("chapter-title"));
     editorTitle_->setAccessibleName(QStringLiteral("Current chapter"));
     editorToolbar->addWidget(editorTitle_, 1);
+    previousChapterButton_ = new QPushButton(QStringLiteral("‹ Previous"), editorChrome_);
+    previousChapterButton_->setObjectName(QStringLiteral("chapter-previous"));
+    connect(previousChapterButton_, &QPushButton::clicked, this,
+            [this] { navigateChapter(-1); });
+    editorToolbar->addWidget(previousChapterButton_);
+    nextChapterButton_ = new QPushButton(QStringLiteral("Next ›"), editorChrome_);
+    nextChapterButton_->setObjectName(QStringLiteral("chapter-next"));
+    connect(nextChapterButton_, &QPushButton::clicked, this,
+            [this] { navigateChapter(1); });
+    editorToolbar->addWidget(nextChapterButton_);
     saveButton_ = new QPushButton(QStringLiteral("Save"), editorChrome_);
     saveButton_->setObjectName(QStringLiteral("chapter-save"));
     connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
@@ -1040,6 +1120,10 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             "Edit refused because protected legacy content could change. Protected source and linked records remain unchanged.");
         updateEditorState(message);
     });
+    static_cast<ProtectedChapterEditor *>(chapterEditor_)->setSplitHandler(
+        [this](const QString &text, int position) {
+            splitActiveChapter(text, position, false);
+        });
     editorLayout->addWidget(chapterEditor_, 1);
     chromeHoverFilter_ = new HoverFadeFilter(editorChrome_, editorChrome_);
     saveTimer_ = new QTimer(this);
@@ -1061,9 +1145,13 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             return;
         }
         lastValidEditorText_ = editedText;
+        if (chapterStructure_) {
+            chapterStructure_->invalidateHistoryForChapterEdit(activeChapterRelativePath_);
+        }
         chapterDirty_ = true;
         updateEditorState();
         saveTimer_->start();
+        updateChapterStructureActions();
     });
 
     refusalPage_ = new QWidget(pages_);
@@ -1166,6 +1254,17 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         }
         QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
     });
+
+    QMenu *editMenu = menuBar()->addMenu(QStringLiteral("&Edit"));
+    undoStructureAction_ = editMenu->addAction(QStringLiteral("Undo chapter structure"));
+    undoStructureAction_->setObjectName(QStringLiteral("chapter-structure-undo"));
+    connect(undoStructureAction_, &QAction::triggered,
+            this, &LibraryWindow::undoChapterStructure);
+    redoStructureAction_ = editMenu->addAction(QStringLiteral("Redo chapter structure"));
+    redoStructureAction_->setObjectName(QStringLiteral("chapter-structure-redo"));
+    connect(redoStructureAction_, &QAction::triggered,
+            this, &LibraryWindow::redoChapterStructure);
+    updateChapterStructureActions();
 }
 
 QString LibraryWindow::defaultLibraryPath()
@@ -1230,6 +1329,13 @@ bool LibraryWindow::openLibrary(const QString &path)
 {
     if (!savePendingEdits()) {
         return false;
+    }
+    const bool sameLibrary = !activeLibraryPath_.isEmpty() &&
+        canonicalOrCleanPath(path) == canonicalOrCleanPath(activeLibraryPath_);
+    if (!sameLibrary) {
+        chapterStructure_.reset();
+        structureBookId_.clear();
+        activeBookId_.clear();
     }
     organization_.reset();
     activeLibraryPath_.clear();
@@ -1630,6 +1736,11 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
         return;
     }
 
+    if (item->data(0, ItemKindRole).toInt() == ChapterItemKind) {
+        showChapterStructureMenu(item, tree_->viewport()->mapToGlobal(position));
+        return;
+    }
+
     if (item->data(0, ItemKindRole).toInt() != 0) {
         return;
     }
@@ -1638,11 +1749,31 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
         return;
     }
     QMenu menu(this);
+    QAction *addChapter = menu.addAction(QStringLiteral("Add chapter…"));
     QAction *rename = menu.addAction(QStringLiteral("Rename book…"));
     QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
     QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
-    if (chosen == rename) {
+    if (chosen == addChapter) {
+        if (!ensureChapterStructure(bookId) || !savePendingEdits()) {
+            return;
+        }
+        int chapterCount = 0;
+        for (int index = 0; index < item->childCount(); ++index) {
+            chapterCount += item->child(index)->data(0, ItemKindRole).toInt() ==
+                            ChapterItemKind;
+        }
+        bool accepted = false;
+        const QString title = QInputDialog::getText(
+            this, QStringLiteral("Add chapter"), QStringLiteral("Chapter title:"),
+            QLineEdit::Normal, QStringLiteral("Chapter %1").arg(chapterCount + 1),
+            &accepted);
+        if (accepted) {
+            const ChapterStructureResult result =
+                chapterStructure_->addChapter(chapterCount, title);
+            applyChapterStructureResult(result, bookId, QStringLiteral("Chapter added."));
+        }
+    } else if (chosen == rename) {
         bool accepted = false;
         const QString title = QInputDialog::getText(
             this, QStringLiteral("Rename book"), QStringLiteral("Book title:"),
@@ -1667,6 +1798,145 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
                    QMessageBox::Cancel) == QMessageBox::Yes) {
         finishOrganizationChange(organization_->moveBookToTrash(bookId),
                                  QStringLiteral("Book moved to Trash."));
+    }
+}
+
+void LibraryWindow::showChapterStructureMenu(QTreeWidgetItem *item,
+                                             const QPoint &globalPosition)
+{
+    if (!item) {
+        return;
+    }
+    const QString bookId = item->data(0, BookIdRole).toString();
+    const QString chapterId = item->data(0, ChapterIdRole).toString();
+    if (bookId.isEmpty() || chapterId.isEmpty() || !ensureChapterStructure(bookId)) {
+        return;
+    }
+
+    int row = 0;
+    int chapterCount = 0;
+    for (int index = 0; index < item->parent()->childCount(); ++index) {
+        QTreeWidgetItem *sibling = item->parent()->child(index);
+        if (sibling->data(0, ItemKindRole).toInt() != ChapterItemKind) {
+            continue;
+        }
+        if (sibling == item) {
+            row = chapterCount;
+        }
+        ++chapterCount;
+    }
+
+    QMenu menu(this);
+    QAction *rename = menu.addAction(QStringLiteral("Rename chapter title…"));
+    QAction *moveUp = menu.addAction(QStringLiteral("Move chapter up"));
+    QAction *moveDown = menu.addAction(QStringLiteral("Move chapter down"));
+    moveUp->setEnabled(row > 0);
+    moveDown->setEnabled(row + 1 < chapterCount);
+    menu.addSeparator();
+    QAction *split = menu.addAction(QStringLiteral("Split at cursor"));
+    const bool activeChapter = pages_->currentWidget() == editorPage_ &&
+        activeBookId_ == bookId &&
+        QFileInfo(activeChapterRelativePath_).completeBaseName() == chapterId &&
+        !activeDocumentIsOutline_ && !chapterReadOnly_;
+    split->setEnabled(activeChapter);
+    QAction *joinPrevious = menu.addAction(QStringLiteral("Join with previous chapter"));
+    QAction *joinNext = menu.addAction(QStringLiteral("Join with next chapter"));
+    joinPrevious->setEnabled(row > 0);
+    joinNext->setEnabled(row + 1 < chapterCount);
+    QAction *remove = menu.addAction(QStringLiteral("Delete chapter…"));
+    menu.addSeparator();
+    QAction *undo = menu.addAction(QStringLiteral("Undo chapter structure"));
+    QAction *redo = menu.addAction(QStringLiteral("Redo chapter structure"));
+    undo->setEnabled(chapterStructure_->canUndo());
+    redo->setEnabled(chapterStructure_->canRedo());
+
+    QAction *chosen = menu.exec(globalPosition);
+    if (!chosen) {
+        return;
+    }
+    if (chosen == undo) {
+        undoChapterStructure();
+        return;
+    }
+    if (chosen == redo) {
+        redoChapterStructure();
+        return;
+    }
+    if (chosen == split) {
+        if (activeChapter) {
+            splitActiveChapter(chapterEditor_->toPlainText(),
+                               chapterEditor_->textCursor().position());
+        }
+        return;
+    }
+    if (!savePendingEdits()) {
+        return;
+    }
+
+    const auto readChapterSource = [this, &bookId, &chapterId](
+        ChapterEditSource *source, QString *error) {
+        const QString relativePath = bookId + QStringLiteral("/chapters/") + chapterId +
+                                     QStringLiteral(".html");
+        QByteArray bytes;
+        if (!LibraryPersistence::readLibraryFile(activeLibraryPath_, relativePath,
+                                                 &bytes, error)) {
+            return false;
+        }
+        *source = {bytes, LibraryPersistence::hash(bytes), bytes};
+        return true;
+    };
+
+    ChapterStructureResult result;
+    QString successMessage;
+    if (chosen == rename) {
+        QString currentTitle;
+        const QString label = item->text(0);
+        const int separator = label.indexOf(QStringLiteral(" — "));
+        if (separator >= 0) {
+            currentTitle = label.mid(separator + 3);
+        }
+        bool accepted = false;
+        const QString title = QInputDialog::getText(
+            this, QStringLiteral("Rename chapter"), QStringLiteral("Chapter title:"),
+            QLineEdit::Normal, currentTitle, &accepted);
+        if (!accepted) {
+            return;
+        }
+        result = chapterStructure_->renameChapter(chapterId, title);
+        successMessage = QStringLiteral("Chapter title saved.");
+    } else if (chosen == moveUp || chosen == moveDown) {
+        result = chapterStructure_->moveChapter(chapterId, row + (chosen == moveUp ? -1 : 1));
+        successMessage = QStringLiteral("Chapter order saved.");
+    } else if (chosen == joinPrevious || chosen == joinNext) {
+        ChapterEditSource source;
+        QString readError;
+        if (!readChapterSource(&source, &readError)) {
+            QMessageBox::warning(this, QStringLiteral("Chapter could not be joined"), readError);
+            return;
+        }
+        result = chapterStructure_->joinChapter(
+            chapterId, chosen == joinPrevious, source);
+        successMessage = QStringLiteral("Chapters joined.");
+    } else if (chosen == remove) {
+        if (QMessageBox::question(
+                this, QStringLiteral("Delete chapter"),
+                QStringLiteral("Remove this chapter from the book? Its file remains available for undo and recovery."),
+                QMessageBox::Yes | QMessageBox::Cancel,
+                QMessageBox::Cancel) != QMessageBox::Yes) {
+            return;
+        }
+        ChapterEditSource source;
+        QString readError;
+        if (!readChapterSource(&source, &readError)) {
+            QMessageBox::warning(this, QStringLiteral("Chapter could not be deleted"), readError);
+            return;
+        }
+        result = chapterStructure_->deleteChapter(chapterId, source);
+        successMessage = QStringLiteral("Chapter deleted.");
+    }
+    if (chosen == rename || chosen == moveUp || chosen == moveDown ||
+        chosen == joinPrevious || chosen == joinNext || chosen == remove) {
+        applyChapterStructureResult(result, bookId, successMessage);
     }
 }
 
@@ -1772,18 +2042,28 @@ void LibraryWindow::handleLibraryDrop(
         QStringLiteral("Book moved."));
 }
 
-bool LibraryWindow::openChapter(QTreeWidgetItem *item)
+bool LibraryWindow::openChapter(QTreeWidgetItem *item, bool quietStatus)
 {
     if (!item || item->data(0, ItemKindRole).toInt() != ChapterItemKind) {
         return false;
     }
     const QString bookId = item->data(0, BookIdRole).toString();
     const QString chapterId = item->data(0, ChapterIdRole).toString();
+    if (!ensureChapterStructure(bookId)) {
+        return false;
+    }
     const QString relativePath = bookId + QStringLiteral("/chapters/") + chapterId +
                                  QStringLiteral(".html");
     const QString title = item->parent()->text(0) + QStringLiteral(" — ") + item->text(0);
-    return openDocument(relativePath, title,
-                        loadChapterLinks(activeLibraryPath_, bookId, chapterId), false);
+    const bool opened = openDocument(relativePath, title,
+                                     loadChapterLinks(activeLibraryPath_, bookId, chapterId),
+                                     false, quietStatus);
+    if (opened) {
+        activeBookId_ = bookId;
+        updateChapterNavigation();
+        updateChapterStructureActions();
+    }
+    return opened;
 }
 
 bool LibraryWindow::openOutline(QTreeWidgetItem *item)
@@ -1794,13 +2074,271 @@ bool LibraryWindow::openOutline(QTreeWidgetItem *item)
     const QString bookId = item->data(0, BookIdRole).toString();
     const QString relativePath = bookId + QStringLiteral("/outline.html");
     const QString title = item->parent()->text(0) + QStringLiteral(" — Outline");
-    return openDocument(relativePath, title, {}, true);
+    const bool opened = openDocument(relativePath, title, {}, true);
+    if (opened) {
+        updateChapterNavigation();
+    }
+    return opened;
+}
+
+void LibraryWindow::navigateChapter(int direction)
+{
+    if (activeDocumentIsOutline_ || activeBookId_.isEmpty() ||
+        activeChapterRelativePath_.isEmpty()) {
+        return;
+    }
+    QTreeWidgetItem *bookItem = nullptr;
+    for (int index = 0; index < tree_->topLevelItemCount() && !bookItem; ++index) {
+        bookItem = findBookItem(tree_->topLevelItem(index), activeBookId_);
+    }
+    if (!bookItem) {
+        return;
+    }
+    const QString chapterId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    for (int index = 0; index < bookItem->childCount(); ++index) {
+        QTreeWidgetItem *item = bookItem->child(index);
+        if (item->data(0, ChapterIdRole).toString() != chapterId) {
+            continue;
+        }
+        const int destination = index + direction;
+        if (destination >= 0 && destination < bookItem->childCount() &&
+            bookItem->child(destination)->data(0, ItemKindRole).toInt() == ChapterItemKind) {
+            QTreeWidgetItem *next = bookItem->child(destination);
+            if (openChapter(next)) {
+                tree_->setCurrentItem(next);
+            }
+        }
+        return;
+    }
+}
+
+void LibraryWindow::updateChapterNavigation()
+{
+    previousChapterButton_->setEnabled(false);
+    nextChapterButton_->setEnabled(false);
+    if (activeDocumentIsOutline_ || activeBookId_.isEmpty()) {
+        return;
+    }
+    QTreeWidgetItem *bookItem = nullptr;
+    for (int index = 0; index < tree_->topLevelItemCount() && !bookItem; ++index) {
+        bookItem = findBookItem(tree_->topLevelItem(index), activeBookId_);
+    }
+    if (!bookItem) {
+        return;
+    }
+    const QString chapterId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    for (int index = 0; index < bookItem->childCount(); ++index) {
+        if (bookItem->child(index)->data(0, ChapterIdRole).toString() != chapterId) {
+            continue;
+        }
+        previousChapterButton_->setEnabled(index > 0 &&
+            bookItem->child(index - 1)->data(0, ItemKindRole).toInt() == ChapterItemKind);
+        nextChapterButton_->setEnabled(index + 1 < bookItem->childCount() &&
+            bookItem->child(index + 1)->data(0, ItemKindRole).toInt() == ChapterItemKind);
+        return;
+    }
+}
+
+bool LibraryWindow::ensureChapterStructure(const QString &bookId)
+{
+    if (activeLibraryPath_.isEmpty() || bookId.isEmpty()) {
+        return false;
+    }
+    if (chapterStructure_ && structureBookId_ == bookId) {
+        return true;
+    }
+
+    auto structure = std::make_unique<ChapterStructure>(activeLibraryPath_, bookId);
+    QString error;
+    if (!structure->load(&error)) {
+        if (pages_->currentWidget() == editorPage_) {
+            updateEditorState(error);
+        } else {
+            QMessageBox::warning(this, QStringLiteral("Chapter structure unavailable"), error);
+        }
+        return false;
+    }
+    chapterStructure_ = std::move(structure);
+    structureBookId_ = bookId;
+    updateChapterStructureActions();
+    return true;
+}
+
+void LibraryWindow::splitActiveChapter(const QString &text, int position, bool notify)
+{
+    if (chapterReadOnly_ || activeDocumentIsOutline_ || activeBookId_.isEmpty() ||
+        chapterDocument_.hasProtectedContent()) {
+        updateEditorState(QStringLiteral(
+            "This chapter contains protected legacy content or is read-only. The split was refused without changing the Library."));
+        return;
+    }
+    if (!ensureChapterStructure(activeBookId_)) {
+        return;
+    }
+    QString encodeError;
+    const QByteArray currentBytes = LegacyChapterCodec::encode(
+        text, chapterDocument_.hasUtf8Bom, &encodeError);
+    if (!encodeError.isEmpty()) {
+        updateEditorState(encodeError);
+        return;
+    }
+    const ChapterStructureResult result = chapterStructure_->splitChapter(
+        QFileInfo(activeChapterRelativePath_).completeBaseName(), position,
+        {currentBytes, sourceHash_, sourceBytes_}, QString());
+    applyChapterStructureResult(
+        result, activeBookId_, notify ? QStringLiteral("Chapter split.") : QString(), notify);
+}
+
+void LibraryWindow::applyChapterStructureResult(const ChapterStructureResult &result,
+                                               const QString &bookId,
+                                               const QString &successMessage,
+                                               bool notify)
+{
+    if (!result.ok) {
+        if (pages_->currentWidget() == editorPage_) {
+            updateEditorState(result.error);
+        } else {
+            QMessageBox::warning(this, QStringLiteral("Chapter structure unchanged"),
+                                 result.error);
+        }
+        if (notify) {
+            statusBar()->showMessage(QStringLiteral("Chapter structure was not changed"));
+        }
+        updateChapterStructureActions();
+        return;
+    }
+    if (!refreshChapterStructureView(bookId, result.chapterId, notify)) {
+        return;
+    }
+    if (notify && !successMessage.isEmpty()) {
+        statusBar()->showMessage(successMessage, 5000);
+    }
+}
+
+bool LibraryWindow::refreshChapterStructureView(const QString &bookId,
+                                               const QString &chapterId,
+                                               bool notify)
+{
+    saveTimer_->stop();
+    chapterDirty_ = false;
+    chapterConflict_ = false;
+    saveFailed_ = false;
+    const QString libraryPath = activeLibraryPath_;
+    if (libraryPath.isEmpty()) {
+        return false;
+    }
+    loadingChapter_ = true;
+    const LibraryReadResult result = LibraryReader::read(libraryPath);
+    if (!result.ok()) {
+        loadingChapter_ = false;
+        pages_->setCurrentWidget(libraryPage_);
+        const QString message =
+            QStringLiteral("Chapter structure was saved, but the Library could not be refreshed: %1")
+                .arg(result.error);
+        if (notify) {
+            statusBar()->showMessage(message);
+        } else {
+            updateEditorState(message);
+        }
+        updateChapterStructureActions();
+        return false;
+    }
+    applyPreferences(result.library.preferences);
+    populateLibraryTree(result.library);
+    pages_->setCurrentWidget(libraryPage_);
+    if (chapterId.isEmpty()) {
+        loadingChapter_ = false;
+        updateChapterStructureActions();
+        return true;
+    }
+
+    std::function<QTreeWidgetItem *(QTreeWidgetItem *)> findChapter =
+        [&](QTreeWidgetItem *parent) -> QTreeWidgetItem * {
+        if (parent->data(0, ItemKindRole).toInt() == ChapterItemKind &&
+            parent->data(0, BookIdRole).toString() == bookId &&
+            parent->data(0, ChapterIdRole).toString() == chapterId) {
+            return parent;
+        }
+        for (int index = 0; index < parent->childCount(); ++index) {
+            if (QTreeWidgetItem *found = findChapter(parent->child(index))) {
+                return found;
+            }
+        }
+        return nullptr;
+    };
+    QTreeWidgetItem *chapterItem = nullptr;
+    for (int index = 0; index < tree_->topLevelItemCount() && !chapterItem; ++index) {
+        chapterItem = findChapter(tree_->topLevelItem(index));
+    }
+    bool refreshed = false;
+    if (chapterItem) {
+        tree_->setCurrentItem(chapterItem);
+        refreshed = openChapter(chapterItem, !notify) && !saveFailed_;
+        if (!refreshed) {
+            loadingChapter_ = false;
+            pages_->setCurrentWidget(libraryPage_);
+            const QString message = QStringLiteral(
+                "Chapter structure was saved, but the selected chapter could not be opened.");
+            if (notify) {
+                statusBar()->showMessage(message);
+            } else {
+                updateEditorState(message);
+            }
+        }
+    } else {
+        loadingChapter_ = false;
+        pages_->setCurrentWidget(libraryPage_);
+        const QString message = QStringLiteral(
+            "Chapter structure was saved, but the selected chapter could not be found.");
+        if (notify) {
+            statusBar()->showMessage(message);
+        } else {
+            updateEditorState(message);
+        }
+    }
+    updateChapterStructureActions();
+    return refreshed;
+}
+
+void LibraryWindow::updateChapterStructureActions()
+{
+    const bool usable = chapterStructure_ && !chapterDirty_ &&
+                        !chapterConflict_ && !saveFailed_;
+    if (undoStructureAction_) {
+        undoStructureAction_->setEnabled(usable && chapterStructure_->canUndo());
+    }
+    if (redoStructureAction_) {
+        redoStructureAction_->setEnabled(usable && chapterStructure_->canRedo());
+    }
+}
+
+void LibraryWindow::undoChapterStructure()
+{
+    if (!chapterStructure_ || !chapterStructure_->canUndo() ||
+        !savePendingEdits()) {
+        return;
+    }
+    const QString bookId = structureBookId_;
+    applyChapterStructureResult(chapterStructure_->undo(), bookId,
+                                QStringLiteral("Chapter structure undone."));
+}
+
+void LibraryWindow::redoChapterStructure()
+{
+    if (!chapterStructure_ || !chapterStructure_->canRedo() ||
+        !savePendingEdits()) {
+        return;
+    }
+    const QString bookId = structureBookId_;
+    applyChapterStructureResult(chapterStructure_->redo(), bookId,
+                                QStringLiteral("Chapter structure redone."));
 }
 
 bool LibraryWindow::openDocument(const QString &relativePath,
                                  const QString &title,
                                  const LegacyChapterLinkContext &links,
-                                 bool outline)
+                                 bool outline,
+                                 bool quietStatus)
 {
     if (!savePendingEdits()) {
         return false;
@@ -1836,8 +2374,10 @@ bool LibraryWindow::openDocument(const QString &relativePath,
         saveButton_->setEnabled(false);
         loadingChapter_ = false;
         pages_->setCurrentWidget(editorPage_);
-        statusBar()->showMessage(outline ? QStringLiteral("Outline could not be opened safely")
-                                         : QStringLiteral("Chapter could not be opened safely"));
+        if (!quietStatus) {
+            statusBar()->showMessage(outline ? QStringLiteral("Outline could not be opened safely")
+                                             : QStringLiteral("Chapter could not be opened safely"));
+        }
         return true;
     }
 
@@ -1880,11 +2420,13 @@ bool LibraryWindow::openDocument(const QString &relativePath,
     saveButton_->setText(QStringLiteral("Save"));
     saveButton_->setEnabled(false);
     pages_->setCurrentWidget(editorPage_);
-    statusBar()->showMessage(chapterReadOnly_
-                                 ? (outline ? QStringLiteral("Outline is read-only")
-                                            : QStringLiteral("Chapter is read-only"))
-                                 : (outline ? QStringLiteral("Outline open; no Library files changed")
-                                            : QStringLiteral("Chapter open; no Library files changed")));
+    if (!quietStatus) {
+        statusBar()->showMessage(chapterReadOnly_
+                                     ? (outline ? QStringLiteral("Outline is read-only")
+                                                : QStringLiteral("Chapter is read-only"))
+                                     : (outline ? QStringLiteral("Outline open; no Library files changed")
+                                                : QStringLiteral("Chapter open; no Library files changed")));
+    }
     if (!chapterReadOnly_) {
         chapterEditor_->setFocus();
     }
@@ -2018,7 +2560,9 @@ bool LibraryWindow::saveCurrentChapter()
 
     sourceHash_ = result.savedHash;
     sourceBytes_ = newBytes;
-    chapterDocument_.text = chapterEditor_->toPlainText();
+    chapterDocument_ = LegacyChapterCodec::decode(newBytes, chapterLinks_);
+    static_cast<ProtectedChapterEditor *>(chapterEditor_)
+        ->refreshProtectedTokens(protectedTokens(chapterDocument_));
     lastValidEditorText_ = chapterDocument_.text;
     chapterDirty_ = false;
     chapterConflict_ = false;
@@ -2038,6 +2582,7 @@ bool LibraryWindow::saveCurrentChapter()
                                            : QStringLiteral(
                                                  "Plain prose is editable. Changes are saved.");
     updateEditorState(savedMessage);
+    updateChapterStructureActions();
     return true;
 }
 

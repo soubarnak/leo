@@ -9,9 +9,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QByteArrayView>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
+#include <QSet>
 #include <QUuid>
 
 #include <algorithm>
@@ -26,11 +28,19 @@ namespace {
 using Manifest = QMap<QString, QByteArray>;
 
 struct Journal {
+    struct File {
+        QString relativePath;
+        bool oldExists = true;
+        QByteArray oldBytes;
+        QByteArray newBytes;
+    };
+
     QString id;
     QString libraryPath;
     QString relativePath;
     QByteArray oldBytes;
     QByteArray newBytes;
+    QVector<File> files;
     QString state;
 };
 
@@ -38,6 +48,7 @@ PersistenceResult conflictWithPreservedDraft(const QString &libraryPath,
                                              const QString &relativePath,
                                              const QByteArray &draftBytes,
                                              const QString &reason);
+PersistenceResult failed(const QString &error, bool conflict = false);
 
 QString systemError(const QString &operation, const QString &path)
 {
@@ -357,7 +368,8 @@ bool atomicReplace(const QString &path, const QByteArray &bytes, mode_t mode,
                    const QString &operationId, QString *error,
                    const PersistenceCheckpointHook &checkpoint = {},
                    const QByteArray &expectedCurrentHash = {}, bool *conflict = nullptr,
-                   const PersistenceIoFailureHook &ioFailure = {}, bool journalFile = false)
+                   const PersistenceIoFailureHook &ioFailure = {}, bool journalFile = false,
+                   bool expectedAbsent = false)
 {
     const QFileInfo targetInfo(path);
     const QString parent = targetInfo.absolutePath();
@@ -410,11 +422,36 @@ bool atomicReplace(const QString &path, const QByteArray &bytes, mode_t mode,
             return false;
         }
     }
+    if (expectedAbsent && (QFileInfo::exists(path) || QFileInfo(path).isSymLink())) {
+        *error = QStringLiteral(
+            "A Library file appeared before atomic creation. The current file was left untouched.");
+        if (conflict) {
+            *conflict = true;
+        }
+        ::unlink(nativeStage.constData());
+        return false;
+    }
     if (injectIoFailure(ioFailure, renameOperation, error)) {
         ::unlink(nativeStage.constData());
         return false;
     }
-    if (::rename(nativeStage.constData(), nativeTarget.constData()) != 0) {
+    if (expectedAbsent) {
+        if (::link(nativeStage.constData(), nativeTarget.constData()) != 0) {
+            if (errno == EEXIST && conflict) {
+                *conflict = true;
+                *error = QStringLiteral(
+                    "A Library file appeared before atomic creation. The current file was left untouched.");
+            } else {
+                *error = systemError(QStringLiteral("Cannot atomically create file"), path);
+            }
+            ::unlink(nativeStage.constData());
+            return false;
+        }
+        if (::unlink(nativeStage.constData()) != 0) {
+            *error = systemError(QStringLiteral("Cannot remove staged file"), stagePath);
+            return false;
+        }
+    } else if (::rename(nativeStage.constData(), nativeTarget.constData()) != 0) {
         *error = systemError(QStringLiteral("Cannot atomically replace file"), path);
         ::unlink(nativeStage.constData());
         return false;
@@ -495,7 +532,7 @@ bool validRelativePath(const QString &path)
 }
 
 bool resolveTarget(const QString &root, const QString &relativePath, QString *target,
-                   QString *error)
+                   QString *error, bool allowMissing = false, bool *exists = nullptr)
 {
     if (!validRelativePath(relativePath)) {
         *error = QStringLiteral("Unsafe Library file path: %1").arg(relativePath);
@@ -523,7 +560,12 @@ bool resolveTarget(const QString &root, const QString &relativePath, QString *ta
         return false;
     }
     const QFileInfo targetInfo(absoluteTarget);
-    if (!targetInfo.exists() || !targetInfo.isFile() || targetInfo.isSymLink()) {
+    const bool targetExists = targetInfo.exists() || targetInfo.isSymLink();
+    if (exists) {
+        *exists = targetExists;
+    }
+    if ((!allowMissing && !targetExists) ||
+        (targetExists && (!targetInfo.isFile() || targetInfo.isSymLink()))) {
         *error = QStringLiteral("Library file is missing or unsafe: %1").arg(absoluteTarget);
         return false;
     }
@@ -559,14 +601,37 @@ bool validOperationId(const QString &id)
 
 QJsonObject journalObject(const Journal &journal)
 {
-    return {{QStringLiteral("id"), journal.id},
-            {QStringLiteral("library_path"), journal.libraryPath},
-            {QStringLiteral("relative_path"), journal.relativePath},
-            {QStringLiteral("old_bytes"), QString::fromLatin1(journal.oldBytes.toBase64())},
-            {QStringLiteral("new_bytes"), QString::fromLatin1(journal.newBytes.toBase64())},
-            {QStringLiteral("old_sha256"), QString::fromLatin1(LibraryPersistence::hash(journal.oldBytes))},
-            {QStringLiteral("new_sha256"), QString::fromLatin1(LibraryPersistence::hash(journal.newBytes))},
-            {QStringLiteral("state"), journal.state}};
+    QJsonObject object{{QStringLiteral("id"), journal.id},
+                       {QStringLiteral("library_path"), journal.libraryPath},
+                       {QStringLiteral("state"), journal.state}};
+    if (journal.files.isEmpty()) {
+        object.insert(QStringLiteral("relative_path"), journal.relativePath);
+        object.insert(QStringLiteral("old_bytes"),
+                      QString::fromLatin1(journal.oldBytes.toBase64()));
+        object.insert(QStringLiteral("new_bytes"),
+                      QString::fromLatin1(journal.newBytes.toBase64()));
+        object.insert(QStringLiteral("old_sha256"),
+                      QString::fromLatin1(LibraryPersistence::hash(journal.oldBytes)));
+        object.insert(QStringLiteral("new_sha256"),
+                      QString::fromLatin1(LibraryPersistence::hash(journal.newBytes)));
+        return object;
+    }
+
+    QJsonArray files;
+    for (const Journal::File &file : journal.files) {
+        files.append(QJsonObject{
+            {QStringLiteral("relative_path"), file.relativePath},
+            {QStringLiteral("old_exists"), file.oldExists},
+            {QStringLiteral("old_bytes"), QString::fromLatin1(file.oldBytes.toBase64())},
+            {QStringLiteral("new_bytes"), QString::fromLatin1(file.newBytes.toBase64())},
+            {QStringLiteral("old_sha256"), file.oldExists
+                 ? QString::fromLatin1(LibraryPersistence::hash(file.oldBytes))
+                 : QString()},
+            {QStringLiteral("new_sha256"),
+             QString::fromLatin1(LibraryPersistence::hash(file.newBytes))}});
+    }
+    object.insert(QStringLiteral("files"), files);
+    return object;
 }
 
 bool writeJournal(const QString &directory, const Journal &journal, QString *path,
@@ -603,18 +668,68 @@ bool parseJournal(const QString &path, Journal *journal, QString *error,
     }
 
     const QJsonObject object = document.object();
+    const QString id = object.value(QStringLiteral("id")).toString();
+    const QString libraryPath = object.value(QStringLiteral("library_path")).toString();
+    const QString state = object.value(QStringLiteral("state")).toString();
+    if (!validOperationId(id) || QFileInfo(path).completeBaseName() != id ||
+        libraryPath.isEmpty() ||
+        (state != QStringLiteral("prepared") && state != QStringLiteral("complete"))) {
+        *error = QStringLiteral("Cannot recover save journal %1: invalid journal data.").arg(path);
+        return false;
+    }
+
+    journal->id = id;
+    journal->libraryPath = libraryPath;
+    journal->state = state;
+    const QJsonValue filesValue = object.value(QStringLiteral("files"));
+    if (filesValue.isArray()) {
+        const QJsonArray files = filesValue.toArray();
+        if (files.isEmpty()) {
+            *error = QStringLiteral("Cannot recover save journal %1: empty file transaction.")
+                         .arg(path);
+            return false;
+        }
+        QSet<QString> paths;
+        for (const QJsonValue &value : files) {
+            if (!value.isObject()) {
+                *error = QStringLiteral("Cannot recover save journal %1: invalid file transaction.")
+                             .arg(path);
+                return false;
+            }
+            const QJsonObject fileObject = value.toObject();
+            Journal::File file;
+            file.relativePath = fileObject.value(QStringLiteral("relative_path")).toString();
+            file.oldExists = fileObject.value(QStringLiteral("old_exists")).toBool();
+            const QString oldBase64 = fileObject.value(QStringLiteral("old_bytes")).toString();
+            const QString newBase64 = fileObject.value(QStringLiteral("new_bytes")).toString();
+            file.oldBytes = QByteArray::fromBase64(oldBase64.toLatin1());
+            file.newBytes = QByteArray::fromBase64(newBase64.toLatin1());
+            const QString oldHash = fileObject.value(QStringLiteral("old_sha256")).toString();
+            const QString newHash = fileObject.value(QStringLiteral("new_sha256")).toString();
+            const bool oldDataValid = file.oldExists
+                ? QString::fromLatin1(file.oldBytes.toBase64()) == oldBase64 &&
+                      oldHash.toLatin1() == LibraryPersistence::hash(file.oldBytes)
+                : oldBase64.isEmpty() && oldHash.isEmpty();
+            if (!validRelativePath(file.relativePath) || paths.contains(file.relativePath) ||
+                !fileObject.value(QStringLiteral("old_exists")).isBool() || !oldDataValid ||
+                QString::fromLatin1(file.newBytes.toBase64()) != newBase64 ||
+                newHash.toLatin1() != LibraryPersistence::hash(file.newBytes)) {
+                *error = QStringLiteral("Cannot recover save journal %1: invalid file transaction.")
+                             .arg(path);
+                return false;
+            }
+            paths.insert(file.relativePath);
+            journal->files.append(file);
+        }
+        return true;
+    }
+
     const QString oldBase64 = object.value(QStringLiteral("old_bytes")).toString();
     const QString newBase64 = object.value(QStringLiteral("new_bytes")).toString();
     const QByteArray oldBytes = QByteArray::fromBase64(oldBase64.toLatin1());
     const QByteArray newBytes = QByteArray::fromBase64(newBase64.toLatin1());
-    const QString id = object.value(QStringLiteral("id")).toString();
-    const QString libraryPath = object.value(QStringLiteral("library_path")).toString();
     const QString relativePath = object.value(QStringLiteral("relative_path")).toString();
-    const QString state = object.value(QStringLiteral("state")).toString();
-    if (!validOperationId(id) ||
-        QFileInfo(path).completeBaseName() != id || libraryPath.isEmpty() ||
-        !validRelativePath(relativePath) ||
-        (state != QStringLiteral("prepared") && state != QStringLiteral("complete")) ||
+    if (!validRelativePath(relativePath) ||
         QString::fromLatin1(oldBytes.toBase64()) != oldBase64 ||
         QString::fromLatin1(newBytes.toBase64()) != newBase64 ||
         object.value(QStringLiteral("old_sha256")).toString().toLatin1() !=
@@ -624,13 +739,9 @@ bool parseJournal(const QString &path, Journal *journal, QString *error,
         *error = QStringLiteral("Cannot recover save journal %1: invalid journal data.").arg(path);
         return false;
     }
-
-    journal->id = id;
-    journal->libraryPath = libraryPath;
     journal->relativePath = relativePath;
     journal->oldBytes = oldBytes;
     journal->newBytes = newBytes;
-    journal->state = state;
     return true;
 }
 
@@ -672,10 +783,18 @@ bool fileHash(const QString &path, QByteArray *contents, QByteArray *digest,
     return true;
 }
 
+PersistenceResult recoverBatch(const QString &directory, const QString &journalPath,
+                               Journal journal, const PersistenceIoFailureHook &ioFailure,
+                               bool preserveConflictDraft);
+
 PersistenceResult recoverOne(const QString &directory, const QString &journalPath,
                              Journal journal, const PersistenceIoFailureHook &ioFailure,
                              bool preserveConflictDraft)
 {
+    if (!journal.files.isEmpty()) {
+        return recoverBatch(directory, journalPath, std::move(journal), ioFailure,
+                           preserveConflictDraft);
+    }
     const auto pauseForConflict = [&](const QString &reason) {
         if (preserveConflictDraft) {
             return conflictWithPreservedDraft(journal.libraryPath, journal.relativePath,
@@ -1121,6 +1240,199 @@ bool copyVerifiedLibrary(const QString &libraryRoot, const QString &destination,
     return true;
 }
 
+PersistenceResult preserveConflictChanges(const QString &libraryPath,
+                                          const QVector<Journal::File> &files,
+                                          const QString &reason)
+{
+    PersistenceResult result = failed(reason, true);
+    const QString libraryRoot = canonicalDirectory(libraryPath);
+    const QString recoveredDirectory = QDir(AppPaths::dataDirectory())
+                                           .filePath(QStringLiteral("Recovered Libraries"));
+    QString error;
+    if (!ensureOutsideLibrary(recoveredDirectory, libraryRoot, &error) ||
+        !ensurePrivateDirectory(recoveredDirectory, &error)) {
+        result.error += QStringLiteral(" LEO could not preserve the structural draft: %1")
+                            .arg(error);
+        return result;
+    }
+
+    const QString operationId = newOperationId();
+    const QString temporaryPath = QDir(recoveredDirectory)
+                                      .filePath(QStringLiteral(".pending-") + operationId);
+    const QString recoveredPath = QDir(recoveredDirectory).filePath(
+        QStringLiteral("Recovered library ") +
+        QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'")) +
+        QLatin1Char('-') + operationId.left(8));
+    Manifest sourceManifest;
+    if (!copyVerifiedLibrary(libraryRoot, temporaryPath, &sourceManifest, &error)) {
+        result.error += QStringLiteral(" LEO could not preserve the structural draft: %1")
+                            .arg(error);
+        return result;
+    }
+
+    Manifest expectedRecovered = sourceManifest;
+    for (qsizetype index = 0; index < files.size(); ++index) {
+        const Journal::File &file = files.at(index);
+        QString target;
+        bool exists = false;
+        if (!resolveTarget(temporaryPath, file.relativePath, &target, &error, true, &exists)) {
+            QDir(temporaryPath).removeRecursively();
+            result.error += QStringLiteral(" LEO could not preserve the structural draft: %1")
+                                .arg(error);
+            return result;
+        }
+        mode_t mode = 0600;
+        if (exists && !modeForFile(target, &mode, &error)) {
+            QDir(temporaryPath).removeRecursively();
+            result.error += QStringLiteral(" LEO could not preserve the structural draft: %1")
+                                .arg(error);
+            return result;
+        }
+        if (!atomicReplace(target, file.newBytes, mode,
+                           operationId + QLatin1Char('-') + QString::number(index),
+                           &error)) {
+            QDir(temporaryPath).removeRecursively();
+            result.error += QStringLiteral(" LEO could not preserve the structural draft: %1")
+                                .arg(error);
+            return result;
+        }
+        expectedRecovered.insert(QStringLiteral("F:") + file.relativePath,
+                                 LibraryPersistence::hash(file.newBytes));
+    }
+
+    Manifest stillShared;
+    Manifest recoveredManifest;
+    if (!scanTree(libraryRoot, QString(), &stillShared, &error, true) ||
+        !scanTree(temporaryPath, QString(), &recoveredManifest, &error, true) ||
+        stillShared != sourceManifest || recoveredManifest != expectedRecovered) {
+        if (error.isEmpty()) {
+            error = QStringLiteral(
+                "The shared Library changed while LEO verified the structural draft.");
+        }
+        QDir(temporaryPath).removeRecursively();
+        result.error += QStringLiteral(" LEO could not verify the structural draft: %1")
+                            .arg(error);
+        return result;
+    }
+
+    const LibraryReadResult parsedLibrary = LibraryReader::read(temporaryPath);
+    if (!parsedLibrary.ok()) {
+        QDir(temporaryPath).removeRecursively();
+        result.error += QStringLiteral(" The structural draft could not be opened: %1")
+                            .arg(parsedLibrary.error);
+        return result;
+    }
+    if (::rename(QFile::encodeName(temporaryPath).constData(),
+                 QFile::encodeName(recoveredPath).constData()) != 0) {
+        error = systemError(QStringLiteral("Cannot publish Recovered library"), recoveredPath);
+        QDir(temporaryPath).removeRecursively();
+        result.error += QStringLiteral(" LEO could not publish the structural draft: %1")
+                            .arg(error);
+        return result;
+    }
+    if (!syncDirectory(recoveredDirectory, &error)) {
+        result.error += QStringLiteral(" LEO could not flush the structural draft: %1")
+                            .arg(error);
+        return result;
+    }
+    result.recoveredLibraryPath = recoveredPath;
+    result.error += QStringLiteral(
+        " The structural draft is preserved in a separate Recovered Library at %1; the shared Library remains available.")
+                        .arg(recoveredPath);
+    return result;
+}
+
+PersistenceResult recoverBatch(const QString &directory, const QString &journalPath,
+                               Journal journal, const PersistenceIoFailureHook &ioFailure,
+                               bool preserveConflictDraft)
+{
+    const auto pauseForConflict = [&](const QString &reason) {
+        if (preserveConflictDraft) {
+            return preserveConflictChanges(journal.libraryPath, journal.files, reason);
+        }
+        PersistenceResult paused = failed(reason, true);
+        return paused;
+    };
+
+    struct TargetState {
+        QString path;
+        bool exists = false;
+        QByteArray bytes;
+        QByteArray hash;
+    };
+    QVector<TargetState> targets;
+    targets.reserve(journal.files.size());
+    for (const Journal::File &file : journal.files) {
+        TargetState targetState;
+        QString error;
+        if (!resolveTarget(journal.libraryPath, file.relativePath, &targetState.path,
+                           &error, true, &targetState.exists)) {
+            return pauseForConflict(error);
+        }
+        if (targetState.exists) {
+            if (injectIoFailure(ioFailure, PersistenceIoOperation::ReadTarget, &error) ||
+                !fileHash(targetState.path, &targetState.bytes, &targetState.hash, &error)) {
+                return pauseForConflict(error);
+            }
+        }
+        const QByteArray newHash = LibraryPersistence::hash(file.newBytes);
+        const bool matchesOld = file.oldExists
+            ? targetState.exists && targetState.hash == LibraryPersistence::hash(file.oldBytes)
+            : !targetState.exists;
+        const bool matchesNew = targetState.exists && targetState.hash == newHash;
+        if (!matchesOld && !matchesNew) {
+            return pauseForConflict(QStringLiteral(
+                "Save recovery found an external change in %1. The shared file was left untouched.")
+                                        .arg(file.relativePath));
+        }
+        const QString stageOperationId =
+            journal.id + QLatin1Char('-') + QString::number(targets.size());
+        if (!removeInterruptedStage(targetState.path, stageOperationId,
+                                     file.newBytes, &error)) {
+            return pauseForConflict(error);
+        }
+        targets.append(targetState);
+    }
+
+    PersistenceResult result;
+    for (qsizetype index = 0; index < journal.files.size(); ++index) {
+        const Journal::File &file = journal.files.at(index);
+        const TargetState &target = targets.at(index);
+        const QByteArray newHash = LibraryPersistence::hash(file.newBytes);
+        if (target.exists && target.hash == newHash) {
+            continue;
+        }
+
+        mode_t mode = 0600;
+        if (file.oldExists && target.exists && !modeForFile(target.path, &mode, &result.error)) {
+            return result;
+        }
+        bool targetConflict = false;
+        if (!atomicReplace(target.path, file.newBytes, mode,
+                           journal.id + QLatin1Char('-') + QString::number(index),
+                           &result.error, {},
+                           file.oldExists ? LibraryPersistence::hash(file.oldBytes)
+                                          : QByteArray{},
+                           &targetConflict, ioFailure, false, !file.oldExists)) {
+            if (targetConflict) {
+                return pauseForConflict(result.error);
+            }
+            return result;
+        }
+    }
+
+    if (!finishJournal(directory, journalPath, &journal, &result.error, {}, ioFailure)) {
+        return result;
+    }
+    result.ok = true;
+    result.recovered = true;
+    for (const Journal::File &file : journal.files) {
+        result.savedHashes.insert(file.relativePath,
+                                  LibraryPersistence::hash(file.newBytes));
+    }
+    return result;
+}
+
 ConflictPreservation preserveConflictDraft(const QString &libraryPath,
                                            const QString &relativePath,
                                            const QByteArray &draftBytes)
@@ -1230,7 +1542,7 @@ ConflictPreservation preserveConflictDraft(const QString &libraryPath,
     return result;
 }
 
-PersistenceResult failed(const QString &error, bool conflict = false)
+PersistenceResult failed(const QString &error, bool conflict)
 {
     PersistenceResult result;
     result.error = error;
@@ -1565,5 +1877,166 @@ PersistenceResult LibraryPersistence::saveFile(const QString &libraryPath,
     result.ok = true;
     result.recovered = recovery.recovered;
     result.savedHash = newHash;
+    return result;
+}
+
+PersistenceResult LibraryPersistence::saveFiles(
+    const QString &libraryPath, const QVector<PersistenceFileChange> &changes,
+    const PersistenceCheckpointHook &checkpoint,
+    const PersistenceIoFailureHook &ioFailure)
+{
+    if (changes.isEmpty()) {
+        return failed(QStringLiteral("A Library transaction needs at least one file."));
+    }
+
+    const QString libraryRoot = canonicalDirectory(libraryPath);
+    const PersistenceResult recovery =
+        recoverPendingSavesInternal(libraryRoot, ioFailure, false);
+    QVector<Journal::File> intendedFiles;
+    intendedFiles.reserve(changes.size());
+    for (const PersistenceFileChange &change : changes) {
+        Journal::File file;
+        file.relativePath = change.relativePath;
+        file.newBytes = change.newBytes;
+        intendedFiles.append(file);
+    }
+    if (!recovery.ok) {
+        return preserveConflictChanges(
+            libraryRoot, intendedFiles,
+            QStringLiteral("LEO paused this structural edit while recovering an earlier save: %1")
+                .arg(recovery.error));
+    }
+
+    QSet<QString> paths;
+    Journal journal;
+    journal.id = newOperationId();
+    journal.libraryPath = libraryRoot;
+    journal.state = QStringLiteral("prepared");
+    journal.files.reserve(changes.size());
+    QString error;
+    bool hasChanges = false;
+    for (const PersistenceFileChange &change : changes) {
+        if (paths.contains(change.relativePath) ||
+            (change.expectedAbsent && !change.expectedHash.isEmpty()) ||
+            (!change.expectedAbsent && change.expectedHash.isEmpty())) {
+            return failed(QStringLiteral(
+                "The Library transaction has a duplicate path or invalid expected file state."));
+        }
+        paths.insert(change.relativePath);
+
+        QString target;
+        bool exists = false;
+        if (!resolveTarget(libraryRoot, change.relativePath, &target, &error, true, &exists)) {
+            return failed(error);
+        }
+        QByteArray oldBytes;
+        QByteArray oldHash;
+        if (exists) {
+            if (!fileHash(target, &oldBytes, &oldHash, &error)) {
+                return failed(error);
+            }
+        }
+        const bool expectedStateMatches = change.expectedAbsent
+            ? !exists
+            : exists && oldHash == change.expectedHash;
+        if (!expectedStateMatches) {
+            return preserveConflictChanges(
+                libraryRoot, intendedFiles,
+                QStringLiteral("The Library changed before this structural edit could be saved. "
+                               "The shared files were left untouched."));
+        }
+
+        Journal::File file;
+        file.relativePath = change.relativePath;
+        file.oldExists = exists;
+        file.oldBytes = oldBytes;
+        file.newBytes = change.newBytes;
+        hasChanges = hasChanges || !exists || oldBytes != change.newBytes;
+        journal.files.append(file);
+    }
+
+    if (!hasChanges) {
+        PersistenceResult result;
+        result.ok = true;
+        for (const Journal::File &file : journal.files) {
+            result.savedHashes.insert(file.relativePath,
+                                      LibraryPersistence::hash(file.newBytes));
+        }
+        return result;
+    }
+
+    if (!ensureSafetySnapshot(libraryRoot, &error)) {
+        return failed(error);
+    }
+    for (const Journal::File &file : journal.files) {
+        QString target;
+        bool exists = false;
+        if (!resolveTarget(libraryRoot, file.relativePath, &target, &error, true, &exists)) {
+            return failed(error);
+        }
+        QByteArray currentBytes;
+        if (exists && !readFile(target, &currentBytes, &error)) {
+            return failed(error);
+        }
+        if (exists != file.oldExists || currentBytes != file.oldBytes) {
+            return preserveConflictChanges(
+                libraryRoot, intendedFiles,
+                QStringLiteral("The Library changed while LEO prepared a safety snapshot. "
+                               "The shared files were left untouched."));
+        }
+    }
+
+    QString journalPath;
+    const QString privateJournalDirectory = journalDirectory();
+    if (!ensureOutsideLibrary(privateJournalDirectory, libraryRoot, &error) ||
+        !writeJournal(privateJournalDirectory, journal, &journalPath, &error, ioFailure)) {
+        return failed(error);
+    }
+
+    for (qsizetype index = 0; index < journal.files.size(); ++index) {
+        const Journal::File &file = journal.files.at(index);
+        if (file.oldExists && file.oldBytes == file.newBytes) {
+            continue;
+        }
+        QString target;
+        if (!resolveTarget(libraryRoot, file.relativePath, &target, &error, true)) {
+            return preserveConflictChanges(libraryRoot, journal.files, error);
+        }
+        mode_t mode = 0600;
+        if (file.oldExists && !modeForFile(target, &mode, &error)) {
+            return failed(error);
+        }
+        bool targetConflict = false;
+        if (!atomicReplace(
+                target, file.newBytes, mode,
+                journal.id + QLatin1Char('-') + QString::number(index), &error, checkpoint,
+                file.oldExists ? LibraryPersistence::hash(file.oldBytes) : QByteArray{},
+                &targetConflict, ioFailure, false, !file.oldExists)) {
+            if (targetConflict) {
+                return preserveConflictChanges(
+                    libraryRoot, journal.files,
+                    QStringLiteral("The Library changed during a structural edit. "
+                                   "The shared files were left untouched. %1")
+                        .arg(error));
+            }
+            return failed(error);
+        }
+    }
+
+    if (!finishJournal(privateJournalDirectory, journalPath, &journal, &error,
+                       checkpoint, ioFailure)) {
+        return failed(error);
+    }
+
+    PersistenceResult result;
+    result.ok = true;
+    for (const Journal::File &file : journal.files) {
+        result.savedHashes.insert(file.relativePath,
+                                  LibraryPersistence::hash(file.newBytes));
+    }
+    const auto bookHash = result.savedHashes.constFind(QStringLiteral("book.json"));
+    if (bookHash != result.savedHashes.cend()) {
+        result.savedHash = bookHash.value();
+    }
     return result;
 }

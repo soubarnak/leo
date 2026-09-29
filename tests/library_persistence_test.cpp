@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QJsonArray>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
@@ -276,6 +277,119 @@ class LibraryPersistenceTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void multiFileStructureSaveRecoversEveryFileAfterInterruption()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QTemporaryDir library;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        QVERIFY(library.isValid());
+        QVERIFY(writeLibrary(library.path()));
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        QByteArray oldBookBytes;
+        QVERIFY(readFile(QDir(library.path()).filePath(QStringLiteral("book-1/book.json")),
+                         &oldBookBytes));
+        QJsonObject book = QJsonDocument::fromJson(oldBookBytes).object();
+        book.insert(QStringLiteral("chapterOrder"), QJsonArray{QStringLiteral("chapter-a"),
+                                                              QStringLiteral("chapter-b")});
+        book.insert(QStringLiteral("chapterTitles"),
+                    QJsonObject{{QStringLiteral("chapter-a"), QStringLiteral("Arrival")},
+                                {QStringLiteral("chapter-b"), QStringLiteral("Chapter 2")}});
+        const QByteArray newBookBytes =
+            QJsonDocument(book).toJson(QJsonDocument::Indented);
+        const QByteArray newFirstChapter("<p>Part one.</p>");
+        const QByteArray newSecondChapter("<p>Part two.</p>");
+        const PersistenceCheckpointHook interruptAfterFirstRename =
+            [interrupted = false](PersistenceCheckpoint checkpoint, QString *) mutable {
+                if (!interrupted && checkpoint == PersistenceCheckpoint::AfterTargetRename) {
+                    interrupted = true;
+                    return false;
+                }
+                return true;
+            };
+        const PersistenceResult saved = LibraryPersistence::saveFiles(
+            library.path(),
+            {{chapterRelativePath, sha256(oldChapter), false, newFirstChapter},
+             {QStringLiteral("book-1/chapters/chapter-b.html"), {}, true,
+              newSecondChapter},
+             {QStringLiteral("book-1/book.json"), sha256(oldBookBytes), false,
+              newBookBytes}},
+            interruptAfterFirstRename);
+        QVERIFY(!saved.ok);
+
+        const PersistenceResult recovered =
+            LibraryPersistence::recoverPendingSaves(library.path());
+        QVERIFY2(recovered.ok, qPrintable(recovered.error));
+        QVERIFY(recovered.recovered);
+        QByteArray firstBytes;
+        QByteArray secondBytes;
+        QByteArray bookBytes;
+        QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &firstBytes));
+        QVERIFY(readFile(QDir(library.path()).filePath(
+                             QStringLiteral("book-1/chapters/chapter-b.html")),
+                         &secondBytes));
+        QVERIFY(readFile(QDir(library.path()).filePath(QStringLiteral("book-1/book.json")),
+                         &bookBytes));
+        QCOMPARE(firstBytes, newFirstChapter);
+        QCOMPARE(secondBytes, newSecondChapter);
+        QCOMPARE(QJsonDocument::fromJson(bookBytes).object()
+                     .value(QStringLiteral("chapterOrder")).toArray().size(), 2);
+    }
+
+    void multiFileConflictPreservesSharedVersionAndRecoveredStructure()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QTemporaryDir library;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        QVERIFY(library.isValid());
+        QVERIFY(writeLibrary(library.path()));
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        QByteArray oldBookBytes;
+        QVERIFY(readFile(QDir(library.path()).filePath(QStringLiteral("book-1/book.json")),
+                         &oldBookBytes));
+        QJsonObject book = QJsonDocument::fromJson(oldBookBytes).object();
+        book.insert(QStringLiteral("chapterOrder"), QJsonArray{QStringLiteral("chapter-a"),
+                                                              QStringLiteral("chapter-b")});
+        const QByteArray desiredBookBytes = QJsonDocument(book).toJson(QJsonDocument::Indented);
+        const QByteArray externalChapter("<p>External revision.</p>");
+        writeFile(QDir(library.path()).filePath(chapterRelativePath), externalChapter);
+
+        const PersistenceResult saved = LibraryPersistence::saveFiles(
+            library.path(),
+            {{chapterRelativePath, sha256(oldChapter), false,
+              QByteArray("<p>Local revision.</p>")},
+             {QStringLiteral("book-1/chapters/chapter-b.html"), {}, true,
+              QByteArray("<p>Second chapter.</p>")},
+             {QStringLiteral("book-1/book.json"), sha256(oldBookBytes), false,
+              desiredBookBytes}});
+        QVERIFY(!saved.ok);
+        QVERIFY(saved.conflict);
+        QVERIFY(!saved.recoveredLibraryPath.isEmpty());
+        QByteArray sharedBytes;
+        QVERIFY(readFile(QDir(library.path()).filePath(chapterRelativePath), &sharedBytes));
+        QCOMPARE(sharedBytes, externalChapter);
+
+        QByteArray recoveredChapter;
+        QVERIFY(readFile(QDir(saved.recoveredLibraryPath).filePath(chapterRelativePath),
+                         &recoveredChapter));
+        QCOMPARE(recoveredChapter, QByteArray("<p>Local revision.</p>"));
+        QByteArray recoveredNewChapter;
+        QVERIFY(readFile(QDir(saved.recoveredLibraryPath).filePath(
+                             QStringLiteral("book-1/chapters/chapter-b.html")),
+                         &recoveredNewChapter));
+        QCOMPARE(recoveredNewChapter, QByteArray("<p>Second chapter.</p>"));
+        const LibraryReadResult recoveredLibrary =
+            LibraryReader::read(saved.recoveredLibraryPath);
+        QVERIFY2(recoveredLibrary.ok(), qPrintable(recoveredLibrary.error));
+    }
+
     void externalWriteAtRenameBoundaryIsPreserved()
     {
         QTemporaryDir privateData;

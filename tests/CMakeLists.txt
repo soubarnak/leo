@@ -13,6 +13,11 @@ target_link_libraries(leo-library-organization-test PRIVATE leo_library_browser 
 add_test(NAME leo-library-organization COMMAND leo-library-organization-test)
 set_tests_properties(leo-library-organization PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(leo-chapter-structure-test chapter_structure_test.cpp)
+target_link_libraries(leo-chapter-structure-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-chapter-structure COMMAND leo-chapter-structure-test)
+set_tests_properties(leo-chapter-structure PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_test(NAME leo-writer-version COMMAND $<TARGET_FILE:leo-writer> --version)
 add_test(NAME leo-writer-package-identity
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/package_identity_test.sh

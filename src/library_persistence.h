@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
+#include <QVector>
 
 #include <functional>
 
@@ -43,8 +45,16 @@ struct PersistenceResult {
     bool recovered = false;
     QString error;
     QByteArray savedHash;
+    QHash<QString, QByteArray> savedHashes;
     QString conflictDraftPath;
     QString recoveredLibraryPath;
+};
+
+struct PersistenceFileChange {
+    QString relativePath;
+    QByteArray expectedHash;
+    bool expectedAbsent = false;
+    QByteArray newBytes;
 };
 
 class LibraryPersistence final {
@@ -69,4 +79,8 @@ public:
                                       const QByteArray &newBytes,
                                       const PersistenceCheckpointHook &checkpoint = {},
                                       const PersistenceIoFailureHook &ioFailure = {});
+    static PersistenceResult saveFiles(const QString &libraryPath,
+                                       const QVector<PersistenceFileChange> &changes,
+                                       const PersistenceCheckpointHook &checkpoint = {},
+                                       const PersistenceIoFailureHook &ioFailure = {});
 };

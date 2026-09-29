@@ -1604,6 +1604,138 @@ private slots:
         QCOMPARE(chapter.readAll(), newBytes);
         QVERIFY(!QFileInfo::exists(stagePath));
     }
+
+    void secondEnterCreatesAndPersistsANeoSceneBreak()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Before.</p>"));
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *save = window.findChild<QPushButton *>("chapter-save");
+        QVERIFY(editor);
+        QVERIFY(save);
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClick(editor, Qt::Key_Return);
+        QTest::keyClick(editor, Qt::Key_Return);
+        QApplication::processEvents();
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Before.\n***\n"));
+
+        save->click();
+        QApplication::processEvents();
+        const QByteArray saved = readFile(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html")));
+        QVERIFY(saved.contains(QByteArrayLiteral("<p class=\"scene-break\">***</p>")));
+        const LegacyChapterDocument decoded = LegacyChapterCodec::decode(saved);
+        QVERIFY(decoded.editable());
+        QVERIFY(decoded.text.contains(QStringLiteral("***")));
+    }
+
+    void chapterNavigationSavesPendingTextAndFollowsBookOrder()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>First.</p>"));
+        QVERIFY(library.isValid());
+        const QString bookPath = QDir(library.path()).filePath(QStringLiteral("book-1"));
+        QJsonObject book = QJsonDocument::fromJson(readFile(
+            QDir(bookPath).filePath(QStringLiteral("book.json")))).object();
+        book.insert(QStringLiteral("chapterOrder"),
+                    QJsonArray{QStringLiteral("chapter-a"), QStringLiteral("chapter-b")});
+        QJsonObject titles;
+        titles.insert(QStringLiteral("chapter-a"), QStringLiteral("Arrival"));
+        titles.insert(QStringLiteral("chapter-b"), QStringLiteral("Crossing"));
+        book.insert(QStringLiteral("chapterTitles"), titles);
+        writeFile(QDir(bookPath).filePath(QStringLiteral("book.json")),
+                  QJsonDocument(book).toJson());
+        writeFile(QDir(bookPath).filePath(QStringLiteral("chapters/chapter-b.html")),
+                  QByteArrayLiteral("<p>Second.</p>"));
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *previous = window.findChild<QPushButton *>("chapter-previous");
+        auto *next = window.findChild<QPushButton *>("chapter-next");
+        QVERIFY(editor);
+        QVERIFY(previous);
+        QVERIFY(next);
+        QVERIFY(!previous->isEnabled());
+        QVERIFY(next->isEnabled());
+        editor->setPlainText(QStringLiteral("Edited first."));
+        next->click();
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Second."));
+        QVERIFY(previous->isEnabled());
+        QVERIFY(!next->isEnabled());
+        QCOMPARE(readFile(QDir(bookPath).filePath(QStringLiteral("chapters/chapter-a.html"))),
+                 QByteArrayLiteral("<p>Edited first.</p>"));
+        previous->click();
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Edited first."));
+    }
+
+    void tripleEnterSplitsAndStructuralUndoRestoresTheChapter()
+    {
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+        const QByteArray original("<p>Before.</p>");
+        QTemporaryDir library = makeSingleChapterLibrary(original);
+        QVERIFY(library.isValid());
+
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        editor->moveCursor(QTextCursor::End);
+        QTest::keyClick(editor, Qt::Key_Return);
+        QTest::keyClick(editor, Qt::Key_Enter);
+        QTest::keyClick(editor, Qt::Key_Enter);
+        QApplication::processEvents();
+
+        QFile bookFile(QDir(library.path()).filePath(QStringLiteral("book-1/book.json")));
+        QVERIFY(bookFile.open(QIODevice::ReadOnly));
+        QJsonObject book = QJsonDocument::fromJson(bookFile.readAll()).object();
+        QJsonArray order = book.value(QStringLiteral("chapterOrder")).toArray();
+        QCOMPARE(order.size(), 2);
+        QCOMPARE(order.first().toString(), QStringLiteral("chapter-a"));
+        const QString addedId = order.last().toString();
+        QCOMPARE(readFile(QDir(library.path()).filePath(
+                     QStringLiteral("book-1/chapters/chapter-a.html"))), original);
+        QVERIFY(QFileInfo::exists(QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/") + addedId + QStringLiteral(".html"))));
+
+        QAction *undo = window.findChild<QAction *>("chapter-structure-undo");
+        QVERIFY(undo);
+        QVERIFY(undo->isEnabled());
+        undo->trigger();
+        QApplication::processEvents();
+        book = QJsonDocument::fromJson(readFile(QDir(library.path()).filePath(
+                                    QStringLiteral("book-1/book.json"))))
+                   .object();
+        order = book.value(QStringLiteral("chapterOrder")).toArray();
+        QCOMPARE(order, QJsonArray{QStringLiteral("chapter-a")});
+        QCOMPARE(readFile(QDir(library.path()).filePath(
+                     QStringLiteral("book-1/chapters/chapter-a.html"))), original);
+        QAction *redo = window.findChild<QAction *>("chapter-structure-redo");
+        QVERIFY(redo);
+        QVERIFY(redo->isEnabled());
+    }
 };
 
 QTEST_MAIN(LibraryBrowserTest)
