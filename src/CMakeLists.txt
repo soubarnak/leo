@@ -7,7 +7,9 @@ target_link_libraries(leo_platform PUBLIC Qt6::Core Qt6::Network)
 target_compile_options(leo_platform PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(leo_library_browser STATIC
+  book_search.cpp
   chapter_structure.cpp
+  chapter_links.cpp
   font_preferences.cpp
   legacy_chapter_codec.cpp
   library_creator.cpp
@@ -16,6 +18,7 @@ add_library(leo_library_browser STATIC
   library_reader.cpp
   library_window.cpp
   release_check_dialog.cpp)
+target_sources(leo_library_browser PRIVATE spellcheck.cpp)
 target_include_directories(leo_library_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(leo_library_browser PUBLIC leo_platform Qt6::Core Qt6::Network Qt6::Widgets)
 target_compile_options(leo_library_browser PRIVATE -Wall -Wextra -Wpedantic)

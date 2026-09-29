@@ -7,6 +7,8 @@
 #include "library_persistence.h"
 #include "library_reader.h"
 #include "release_check_dialog.h"
+#include "spellcheck.h"
+#include "chapter_links.h"
 
 #include <QAction>
 #include <QApplication>
@@ -19,6 +21,7 @@
 #include <QCursor>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDialog>
 #include <QDropEvent>
 #include <QEvent>
 #include <QFile>
@@ -61,6 +64,7 @@
 #include <QTextDocument>
 #include <QTextDocumentFragment>
 #include <QTimer>
+#include <QListWidget>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QUuid>
@@ -258,146 +262,6 @@ QString canonicalOrCleanPath(const QString &path)
                                    ? QDir::cleanPath(info.absolutePath())
                                    : parentInfo.canonicalFilePath();
     return QDir::cleanPath(QDir(parentPath).filePath(info.fileName()));
-}
-
-bool readJsonArray(const QString &libraryPath,
-                   const QString &relativePath,
-                   QSet<QString> *ids,
-                   QHash<QString, QString> *chapterIds,
-                   QString *error)
-{
-    const QString absolutePath = QDir(libraryPath).filePath(relativePath);
-    if (!QFileInfo::exists(absolutePath)) {
-        *error = QStringLiteral("%1 is missing.").arg(relativePath);
-        return false;
-    }
-
-    QByteArray bytes;
-    QString readError;
-    if (!LibraryPersistence::readLibraryFile(libraryPath, relativePath, &bytes, &readError)) {
-        *error = QStringLiteral("%1 could not be read: %2").arg(relativePath, readError);
-        return false;
-    }
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isArray()) {
-        *error = QStringLiteral("%1 is not a valid JSON array.").arg(relativePath);
-        return false;
-    }
-
-    const QJsonArray records = document.array();
-    for (int index = 0; index < records.size(); ++index) {
-        if (!records.at(index).isObject()) {
-            *error = QStringLiteral("%1 has an invalid record at position %2.")
-                         .arg(relativePath)
-                         .arg(index + 1);
-            return false;
-        }
-        const QJsonObject record = records.at(index).toObject();
-        const QJsonValue idValue = record.value(QStringLiteral("id"));
-        if (!idValue.isString() || idValue.toString().isEmpty()) {
-            *error = QStringLiteral("%1 has a record without a valid ID.").arg(relativePath);
-            return false;
-        }
-        const QString id = idValue.toString();
-        if (ids->contains(id)) {
-            *error = QStringLiteral("%1 contains duplicate ID '%2'.").arg(relativePath, id);
-            return false;
-        }
-        ids->insert(id);
-        if (chapterIds) {
-            const QJsonValue chapterValue = record.value(QStringLiteral("chapterId"));
-            if (!chapterValue.isUndefined() && !chapterValue.isNull() &&
-                !chapterValue.isString()) {
-                *error = QStringLiteral("%1 has an invalid chapterId for '%2'.")
-                             .arg(relativePath, id);
-                return false;
-            }
-            if (chapterValue.isString()) {
-                chapterIds->insert(id, chapterValue.toString());
-            }
-        }
-    }
-    return true;
-}
-
-LegacyChapterLinkContext loadChapterLinks(const QString &libraryPath,
-                                          const QString &bookId,
-                                          const QString &chapterId)
-{
-    LegacyChapterLinkContext links;
-    links.chapterId = chapterId;
-    const QString bookDirectory = bookId + QLatin1Char('/');
-    readJsonArray(libraryPath, bookDirectory + QStringLiteral("stickies.json"),
-                  &links.stickies.ids, &links.stickies.chapterIds, &links.stickies.readError);
-    readJsonArray(libraryPath, bookDirectory + QStringLiteral("darlings.json"),
-                  &links.darlings.ids, &links.darlings.chapterIds, &links.darlings.readError);
-
-    const QString metadataPath = bookDirectory + QStringLiteral("book.json");
-    QByteArray metadataBytes;
-    QString readError;
-    if (!LibraryPersistence::readLibraryFile(libraryPath, metadataPath,
-                                             &metadataBytes, &readError)) {
-        links.sectionReadError = QStringLiteral("%1 could not be read: %2")
-                                     .arg(metadataPath, readError);
-        return links;
-    }
-    QJsonParseError parseError;
-    const QJsonDocument metadataDocument = QJsonDocument::fromJson(metadataBytes, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !metadataDocument.isObject()) {
-        links.sectionReadError = QStringLiteral("%1 is not a valid JSON object.")
-                                     .arg(metadataPath);
-        return links;
-    }
-
-    const QJsonValue sectionNotesValue =
-        metadataDocument.object().value(QStringLiteral("sectionNotes"));
-    if (sectionNotesValue.isUndefined()) {
-        return links;
-    }
-    if (!sectionNotesValue.isObject()) {
-        links.sectionReadError = QStringLiteral("%1 has invalid sectionNotes metadata.")
-                                     .arg(metadataPath);
-        return links;
-    }
-
-    const QJsonValue chapterSections =
-        sectionNotesValue.toObject().value(chapterId);
-    if (chapterSections.isUndefined()) {
-        return links;
-    }
-    if (!chapterSections.isArray()) {
-        links.sectionReadError = QStringLiteral("%1 has invalid section notes for chapter '%2'.")
-                                     .arg(metadataPath, chapterId);
-        return links;
-    }
-    const QJsonArray sections = chapterSections.toArray();
-    for (int index = 0; index < sections.size(); ++index) {
-        if (!sections.at(index).isObject()) {
-            links.sectionReadError = QStringLiteral(
-                "%1 has an invalid section at position %2 for chapter '%3'.")
-                                         .arg(metadataPath)
-                                         .arg(index + 1)
-                                         .arg(chapterId);
-            return links;
-        }
-        const QJsonValue idValue = sections.at(index).toObject().value(QStringLiteral("id"));
-        if (!idValue.isString() || idValue.toString().isEmpty()) {
-            links.sectionReadError = QStringLiteral(
-                "%1 has a section without a valid ID for chapter '%2'.")
-                                         .arg(metadataPath, chapterId);
-            return links;
-        }
-        const QString id = idValue.toString();
-        if (links.sectionIds.contains(id)) {
-            links.sectionReadError = QStringLiteral(
-                "%1 contains duplicate section ID '%2' for chapter '%3'.")
-                                         .arg(metadataPath, id, chapterId);
-            return links;
-        }
-        links.sectionIds.insert(id);
-    }
-    return links;
 }
 
 QStringList protectedTokens(const LegacyChapterDocument &document)
@@ -1408,6 +1272,16 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     redoStructureAction_->setObjectName(QStringLiteral("chapter-structure-redo"));
     connect(redoStructureAction_, &QAction::triggered,
             this, &LibraryWindow::redoChapterStructure);
+    QAction *findAction = editMenu->addAction(QStringLiteral("Find and Replace…"));
+    findAction->setObjectName(QStringLiteral("book-find-replace"));
+    findAction->setShortcut(QKeySequence::Find);
+    connect(findAction, &QAction::triggered, this, &LibraryWindow::showFindReplace);
+    QAction *undoReplaceAction = editMenu->addAction(QStringLiteral("Undo replacement batch"));
+    undoReplaceAction->setObjectName(QStringLiteral("book-replace-undo"));
+    connect(undoReplaceAction, &QAction::triggered, this, &LibraryWindow::undoReplacement);
+    QAction *spellAction = editMenu->addAction(QStringLiteral("Check Spelling…"));
+    spellAction->setObjectName(QStringLiteral("chapter-spellcheck"));
+    connect(spellAction, &QAction::triggered, this, &LibraryWindow::showSpellcheck);
     auto *formatMenu = menuBar()->addMenu(QStringLiteral("&Format"));
     const auto changedFormat = [this] {
         chapterDirty_ = true;
@@ -1525,6 +1399,8 @@ bool LibraryWindow::openLibrary(const QString &path)
         chapterStructure_.reset();
         structureBookId_.clear();
         activeBookId_.clear();
+        bookSearch_.reset();
+        searchBookId_.clear();
     }
     organization_.reset();
     activeLibraryPath_.clear();
@@ -2645,6 +2521,231 @@ void LibraryWindow::redoChapterStructure()
     const QString bookId = structureBookId_;
     applyChapterStructureResult(chapterStructure_->redo(), bookId,
                                 QStringLiteral("Chapter structure redone."));
+}
+
+void LibraryWindow::showFindReplace()
+{
+    if (activeLibraryPath_.isEmpty() || activeBookId_.isEmpty() || activeDocumentIsOutline_) {
+        statusBar()->showMessage(QStringLiteral("Open a chapter to search its book."), 5000);
+        return;
+    }
+    if (!savePendingEdits()) return;
+    if (!bookSearch_ || searchBookId_ != activeBookId_) {
+        bookSearch_ = std::make_unique<BookSearch>(activeLibraryPath_, activeBookId_);
+        searchBookId_ = activeBookId_;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Find and Replace in Book"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *find = new QLineEdit(&dialog);
+    find->setObjectName(QStringLiteral("book-find-input"));
+    find->setPlaceholderText(QStringLiteral("Find text across chapters"));
+    auto *replacement = new QLineEdit(&dialog);
+    replacement->setObjectName(QStringLiteral("book-replace-input"));
+    replacement->setPlaceholderText(QStringLiteral("Replace with"));
+    auto *hits = new QTreeWidget(&dialog);
+    hits->setObjectName(QStringLiteral("book-find-results"));
+    hits->setHeaderLabels({QStringLiteral("Chapter"), QStringLiteral("Match")});
+    auto *message = new QLabel(&dialog);
+    message->setWordWrap(true);
+    layout->addWidget(find);
+    layout->addWidget(replacement);
+    layout->addWidget(hits);
+    layout->addWidget(message);
+    auto *buttons = new QHBoxLayout;
+    auto *findButton = new QPushButton(QStringLiteral("Find"), &dialog);
+    auto *oneButton = new QPushButton(QStringLiteral("Replace selected"), &dialog);
+    auto *allButton = new QPushButton(QStringLiteral("Replace all"), &dialog);
+    auto *undoButton = new QPushButton(QStringLiteral("Undo batch"), &dialog);
+    buttons->addWidget(findButton);
+    buttons->addWidget(oneButton);
+    buttons->addWidget(allButton);
+    buttons->addWidget(undoButton);
+    layout->addLayout(buttons);
+    const auto refreshChapter = [this] {
+        if (activeChapterRelativePath_.isEmpty()) return;
+        const QString path = activeChapterRelativePath_;
+        const QString title = editorTitle_->text();
+        const auto links = chapterLinks_;
+        if (openDocument(path, title, links, false, true)) refreshBookPages();
+    };
+    const auto scan = [this, find, hits, message] {
+        hits->clear();
+        const auto result = bookSearch_->find(find->text());
+        if (!result.ok) { message->setText(result.error); return; }
+        int blocked = 0;
+        for (const auto &hit : result.hits) {
+            auto *row = new QTreeWidgetItem(hits, {hit.chapterId,
+                hit.blocked ? QStringLiteral("Blocked in protected or semantic content")
+                            : QStringLiteral("Position %1").arg(hit.position + 1)});
+            row->setData(0, Qt::UserRole, hit.position);
+            row->setData(0, Qt::UserRole + 1, hit.blocked);
+            if (hit.blocked) ++blocked;
+        }
+        message->setText(QStringLiteral("%1 matches across chapters; %2 blocked.")
+                             .arg(result.hits.size()).arg(blocked));
+    };
+    connect(findButton, &QPushButton::clicked, &dialog, scan);
+    connect(find, &QLineEdit::returnPressed, &dialog, scan);
+    connect(hits, &QTreeWidget::itemDoubleClicked, &dialog,
+            [this, find](QTreeWidgetItem *row) {
+        QTreeWidgetItem *bookItem = nullptr;
+        for (int index = 0; index < tree_->topLevelItemCount() && !bookItem; ++index)
+            bookItem = findBookItem(tree_->topLevelItem(index), activeBookId_);
+        if (!bookItem) return;
+        for (int index = 0; index < bookItem->childCount(); ++index) {
+            QTreeWidgetItem *chapter = bookItem->child(index);
+            if (chapter->data(0, ChapterIdRole).toString() == row->text(0) &&
+                openChapter(chapter, true)) {
+                tree_->setCurrentItem(chapter);
+                if (!row->data(0, Qt::UserRole + 1).toBool()) {
+                    QTextCursor cursor = chapterEditor_->textCursor();
+                    cursor.setPosition(row->data(0, Qt::UserRole).toInt());
+                    cursor.setPosition(cursor.position() + find->text().size(),
+                                       QTextCursor::KeepAnchor);
+                    chapterEditor_->setTextCursor(cursor);
+                }
+                break;
+            }
+        }
+    });
+    connect(oneButton, &QPushButton::clicked, &dialog,
+            [this, find, replacement, hits, message, scan, refreshChapter] {
+        if (!savePendingEdits()) { message->setText(QStringLiteral("Save the current chapter before replacing.")); return; }
+        auto *row = hits->currentItem();
+        if (!row) { message->setText(QStringLiteral("Select a match first.")); return; }
+        const auto result = bookSearch_->replaceOne(find->text(), replacement->text(),
+            row->text(0), row->data(0, Qt::UserRole).toInt());
+        if (!result.ok) { message->setText(result.error); return; }
+        refreshChapter();
+        scan();
+        message->setText(QStringLiteral("One match replaced. Undo batch is available."));
+    });
+    connect(allButton, &QPushButton::clicked, &dialog,
+            [this, find, replacement, message, scan, refreshChapter] {
+        if (!savePendingEdits()) { message->setText(QStringLiteral("Save the current chapter before replacing.")); return; }
+        const auto result = bookSearch_->replaceAll(find->text(), replacement->text());
+        if (!result.ok) { message->setText(result.error); return; }
+        refreshChapter();
+        scan();
+        message->setText(QStringLiteral("%1 matches replaced as one batch.").arg(result.changed));
+    });
+    connect(undoButton, &QPushButton::clicked, &dialog,
+            [this, message, scan, refreshChapter] {
+        if (!savePendingEdits()) { message->setText(QStringLiteral("Save the current chapter before undoing.")); return; }
+        const auto result = bookSearch_->undo();
+        if (!result.ok) { message->setText(result.error); return; }
+        refreshChapter();
+        scan();
+        message->setText(QStringLiteral("Replacement batch undone."));
+    });
+    dialog.resize(520, 400);
+    find->setFocus();
+    dialog.exec();
+}
+
+void LibraryWindow::undoReplacement()
+{
+    if (!bookSearch_ || !bookSearch_->canUndo() || !savePendingEdits()) {
+        statusBar()->showMessage(QStringLiteral("No replacement batch is available to undo."), 5000);
+        return;
+    }
+    const auto result = bookSearch_->undo();
+    if (!result.ok) { updateEditorState(result.error); return; }
+    if (!activeChapterRelativePath_.isEmpty()) {
+        const auto path = activeChapterRelativePath_;
+        const auto title = editorTitle_->text();
+        const auto links = chapterLinks_;
+        if (openDocument(path, title, links, activeDocumentIsOutline_, true)) refreshBookPages();
+    }
+    statusBar()->showMessage(QStringLiteral("Replacement batch undone."), 5000);
+}
+
+void LibraryWindow::showSpellcheck()
+{
+    if (activeLibraryPath_.isEmpty() || activeChapterRelativePath_.isEmpty() ||
+        chapterReadOnly_) {
+        statusBar()->showMessage(QStringLiteral("Open editable prose to check spelling."), 5000);
+        return;
+    }
+    Spellcheck spell(activeLibraryPath_);
+    if (!spell.ready()) { updateEditorState(spell.error()); return; }
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Check Spelling"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *list = new QListWidget(&dialog);
+    list->setObjectName(QStringLiteral("spell-results"));
+    auto *suggestions = new QListWidget(&dialog);
+    suggestions->setObjectName(QStringLiteral("spell-suggestions"));
+    auto *message = new QLabel(&dialog);
+    layout->addWidget(list);
+    layout->addWidget(suggestions);
+    layout->addWidget(message);
+    auto *buttons = new QHBoxLayout;
+    auto *change = new QPushButton(QStringLiteral("Use suggestion"), &dialog);
+    auto *learn = new QPushButton(QStringLiteral("Add to dictionary"), &dialog);
+    buttons->addWidget(change);
+    buttons->addWidget(learn);
+    layout->addLayout(buttons);
+    const auto scan = [this, &spell, list, message] {
+        list->clear();
+        const QString text = chapterEditor_->toPlainText();
+        for (const auto &miss : spell.check(text)) {
+            bool protectedMatch = false;
+            for (const auto &fragment : chapterDocument_.fragments) {
+                if (fragment.kind != LegacyChapterContentKind::Protected) continue;
+                const int tokenStart = text.indexOf(fragment.token);
+                if (tokenStart >= 0 && miss.position >= tokenStart &&
+                    miss.position < tokenStart + fragment.token.size()) {
+                    protectedMatch = true;
+                    break;
+                }
+            }
+            if (protectedMatch) continue;
+            auto *item = new QListWidgetItem(QStringLiteral("%1 — position %2")
+                .arg(miss.word).arg(miss.position + 1), list);
+            item->setData(Qt::UserRole, miss.word);
+            item->setData(Qt::UserRole + 1, miss.position);
+            item->setData(Qt::UserRole + 2, miss.length);
+        }
+        message->setText(QStringLiteral("%1 possible misspellings.").arg(list->count()));
+    };
+    connect(list, &QListWidget::currentItemChanged, &dialog,
+            [&spell, suggestions](QListWidgetItem *item) {
+        suggestions->clear();
+        if (item) suggestions->addItems(spell.suggestions(item->data(Qt::UserRole).toString()));
+    });
+    connect(change, &QPushButton::clicked, &dialog,
+            [this, list, suggestions, message, scan] {
+        auto *item = list->currentItem();
+        auto *choice = suggestions->currentItem();
+        if (!item || !choice) { message->setText(QStringLiteral("Select a word and suggestion.")); return; }
+        QTextCursor cursor = chapterEditor_->textCursor();
+        cursor.setPosition(item->data(Qt::UserRole + 1).toInt());
+        cursor.setPosition(item->data(Qt::UserRole + 1).toInt() +
+                           item->data(Qt::UserRole + 2).toInt(), QTextCursor::KeepAnchor);
+        cursor.insertText(choice->text());
+        chapterEditor_->setTextCursor(cursor);
+        scan();
+    });
+    connect(learn, &QPushButton::clicked, &dialog, [this, &spell, list, message, scan] {
+        auto *item = list->currentItem();
+        if (!item) { message->setText(QStringLiteral("Select a word first.")); return; }
+        QString error;
+        if (!spell.learn(item->data(Qt::UserRole).toString(), &error)) {
+            message->setText(error); return;
+        }
+        if (organization_ && !organization_->load(&error)) {
+            message->setText(QStringLiteral("Word saved, but Library organization needs reopening: %1")
+                                 .arg(error));
+            return;
+        }
+        scan();
+    });
+    scan();
+    dialog.resize(440, 420);
+    dialog.exec();
 }
 
 bool LibraryWindow::openDocument(const QString &relativePath,

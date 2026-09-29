@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "chapter_structure.h"
+#include "book_search.h"
 #include "legacy_chapter_codec.h"
 #include "library_organization.h"
 #include "library_reader.h"
@@ -81,6 +82,9 @@ private:
     void updateChapterStructureActions();
     void undoChapterStructure();
     void redoChapterStructure();
+    void showFindReplace();
+    void undoReplacement();
+    void showSpellcheck();
     void applyPreferences(const LibraryPreferences &preferences);
     bool saveCurrentChapter();
     bool savePendingEdits();
@@ -106,6 +110,8 @@ private:
     QTreeWidget *tree_ = nullptr;
     std::unique_ptr<LibraryOrganization> organization_;
     std::unique_ptr<ChapterStructure> chapterStructure_;
+    std::unique_ptr<BookSearch> bookSearch_;
+    QString searchBookId_;
     QString structureBookId_;
     QAction *undoStructureAction_ = nullptr;
     QAction *redoStructureAction_ = nullptr;

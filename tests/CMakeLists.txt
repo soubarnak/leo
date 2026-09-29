@@ -18,6 +18,11 @@ target_link_libraries(leo-chapter-structure-test PRIVATE leo_library_browser Qt6
 add_test(NAME leo-chapter-structure COMMAND leo-chapter-structure-test)
 set_tests_properties(leo-chapter-structure PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(leo-book-search-spellcheck-test book_search_spellcheck_test.cpp)
+target_link_libraries(leo-book-search-spellcheck-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-book-search-spellcheck COMMAND leo-book-search-spellcheck-test)
+set_tests_properties(leo-book-search-spellcheck PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_test(NAME leo-writer-version COMMAND $<TARGET_FILE:leo-writer> --version)
 add_test(NAME leo-writer-package-identity
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/package_identity_test.sh
