@@ -751,13 +751,13 @@ private slots:
         QVERIFY(refusal->text().contains("library.json"));
         auto *tree = window.findChild<QTreeWidget *>("library-tree");
         QVERIFY(tree);
-        QVERIFY(tree->isHidden());
+        QVERIFY(!tree->isVisible());
 
         writeFile(QDir(temporary.path()).filePath("library.json"), QByteArray("{broken"));
         QVERIFY(!window.openLibrary(temporary.path()));
         QVERIFY(refusal->isVisible());
         QVERIFY(refusal->text().contains("JSON"));
-        QVERIFY(tree->isHidden());
+        QVERIFY(!tree->isVisible());
         QVERIFY(refusal->text().contains(QStringLiteral("Device handoff")));
         QFile corruptMetadata(QDir(temporary.path()).filePath("library.json"));
         QVERIFY(corruptMetadata.open(QIODevice::ReadOnly));

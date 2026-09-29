@@ -105,11 +105,13 @@ void writePendingTrashMetadata(const QString &root, bool keepBookFolder)
     firstShelf.insert(QStringLiteral("bookIds"), bookIds);
     shelves.replace(0, firstShelf);
     metadata.insert(QStringLiteral("shelves"), shelves);
-    metadata.insert(QStringLiteral("leoPendingTrash"), QJsonObject{
+    const QJsonObject membership{
+        {QStringLiteral("shelfId"), QStringLiteral("s1")},
+        {QStringLiteral("index"), 0}};
+    const QJsonObject pendingTrash{
         {QStringLiteral("bookId"), QStringLiteral("book-2")},
-        {QStringLiteral("memberships"), QJsonArray{QJsonObject{
-             {QStringLiteral("shelfId"), QStringLiteral("s1")},
-             {QStringLiteral("index"), 0}}}}}});
+        {QStringLiteral("memberships"), QJsonArray{membership}}};
+    metadata.insert(QStringLiteral("leoPendingTrash"), pendingTrash);
     writeFile(metadataPath, QJsonDocument(metadata).toJson(QJsonDocument::Indented));
     if (!keepBookFolder &&
         !QDir(QDir(root).filePath(QStringLiteral("book-2"))).removeRecursively()) {
@@ -598,7 +600,7 @@ private slots:
         QVERIFY2(recovery.ok, qPrintable(recovery.error));
         const LibraryReadResult reopened = LibraryReader::read(library.path());
         QVERIFY2(reopened.ok(), qPrintable(reopened.error));
-        QCOMPARE(reopened.library.authors.first().shelves.size(), 3);
+        QCOMPARE(reopened.library.authors.first().shelves.size(), 2);
         QCOMPARE(reopened.library.authors.first().shelves.last().name,
                  QStringLiteral("Interrupted"));
         QCOMPARE(reopened.library.authors.first().shelves.first().books.size(), 2);

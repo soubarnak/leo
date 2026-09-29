@@ -2,7 +2,6 @@
 
 #include <QMainWindow>
 #include <QByteArray>
-#include <QAbstractItemView>
 #include <QPoint>
 
 #include <memory>
@@ -25,6 +24,13 @@ class QWidget;
 class QCloseEvent;
 class HoverFadeFilter;
 
+enum class LibraryDropPosition {
+    OnItem,
+    AboveItem,
+    BelowItem,
+    OnViewport
+};
+
 class LibraryWindow final : public QMainWindow {
 public:
     explicit LibraryWindow(QWidget *parent = nullptr);
@@ -41,7 +47,7 @@ private:
     void manageAuthor(const QString &authorId, const QPoint &globalPosition);
     void showOrganizationContextMenu(const QPoint &position);
     void handleLibraryDrop(QTreeWidgetItem *source, QTreeWidgetItem *target,
-                           QAbstractItemView::DropIndicatorPosition position);
+                           LibraryDropPosition position);
     void finishOrganizationChange(const LibraryOrganizationResult &result,
                                   const QString &successMessage);
     bool refreshOrganizationView();

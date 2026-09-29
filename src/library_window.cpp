@@ -76,7 +76,7 @@ constexpr int OutlineItemKind = 2;
 class LibraryTreeWidget final : public QTreeWidget {
 public:
     using DropHandler = std::function<void(
-        QTreeWidgetItem *, QTreeWidgetItem *, QAbstractItemView::DropIndicatorPosition)>;
+        QTreeWidgetItem *, QTreeWidgetItem *, LibraryDropPosition)>;
 
     explicit LibraryTreeWidget(QWidget *parent = nullptr) : QTreeWidget(parent) {}
 
@@ -105,7 +105,21 @@ protected:
             event->ignore();
             return;
         }
-        dropHandler_(source, target, dropIndicatorPosition());
+        LibraryDropPosition position = LibraryDropPosition::OnViewport;
+        switch (dropIndicatorPosition()) {
+        case QAbstractItemView::OnItem:
+            position = LibraryDropPosition::OnItem;
+            break;
+        case QAbstractItemView::AboveItem:
+            position = LibraryDropPosition::AboveItem;
+            break;
+        case QAbstractItemView::BelowItem:
+            position = LibraryDropPosition::BelowItem;
+            break;
+        case QAbstractItemView::OnViewport:
+            break;
+        }
+        dropHandler_(source, target, position);
         event->acceptProposedAction();
     }
 
@@ -961,7 +975,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     connect(tree_, &QWidget::customContextMenuRequested,
             this, &LibraryWindow::showOrganizationContextMenu);
     libraryTree->setDropHandler([this](QTreeWidgetItem *source, QTreeWidgetItem *target,
-                                       QAbstractItemView::DropIndicatorPosition position) {
+                                       LibraryDropPosition position) {
         handleLibraryDrop(source, target, position);
     });
     libraryLayout->addWidget(tree_, 1);
@@ -1658,7 +1672,7 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
 
 void LibraryWindow::handleLibraryDrop(
     QTreeWidgetItem *source, QTreeWidgetItem *target,
-    QAbstractItemView::DropIndicatorPosition position)
+    LibraryDropPosition position)
 {
     if (!organization_ || !source || !target || source == target ||
         source->data(0, ItemKindRole).toInt() != 0) {
@@ -1692,7 +1706,7 @@ void LibraryWindow::handleLibraryDrop(
                     continue;
                 }
                 if (candidate == targetShelf) {
-                    if (position == QAbstractItemView::AboveItem) {
+                    if (position == LibraryDropPosition::AboveItem) {
                         break;
                     }
                     ++index;
@@ -1744,7 +1758,7 @@ void LibraryWindow::handleLibraryDrop(
             continue;
         }
         if (candidate == targetBook) {
-            if (position == QAbstractItemView::AboveItem) {
+            if (position == LibraryDropPosition::AboveItem) {
                 break;
             }
             ++index;
