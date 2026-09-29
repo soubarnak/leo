@@ -45,8 +45,11 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -54,12 +57,14 @@
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QUrl>
 #include <QUuid>
 #include <QVector>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <functional>
@@ -1114,6 +1119,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     chapterEditor_ = new ProtectedChapterEditor(editorPage_);
     chapterEditor_->setObjectName(QStringLiteral("chapter-editor"));
     chapterEditor_->setAccessibleName(QStringLiteral("Chapter text or read-only source"));
+    chapterEditor_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    chapterEditor_->viewport()->installEventFilter(this);
     dropCapHighlighter_ = new DropCapHighlighter(chapterEditor_->document());
     static_cast<ProtectedChapterEditor *>(chapterEditor_)->setRefusalHandler([this] {
         const QString message = QStringLiteral(
@@ -1124,7 +1131,26 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         [this](const QString &text, int position) {
             splitActiveChapter(text, position, false);
         });
-    editorLayout->addWidget(chapterEditor_, 1);
+    bookFlow_ = new QScrollArea(editorPage_);
+    bookFlow_->setObjectName(QStringLiteral("continuous-book-pages"));
+    bookFlow_->setWidgetResizable(true);
+    bookFlow_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    bookPages_ = new QWidget(bookFlow_);
+    bookPagesLayout_ = new QVBoxLayout(bookPages_);
+    bookPagesLayout_->setContentsMargins(24, 24, 24, 24);
+    bookPagesLayout_->setSpacing(24);
+    bookFlow_->setWidget(bookPages_);
+    editorLayout->addWidget(bookFlow_, 1);
+    bookPagesLayout_->addWidget(chapterEditor_);
+    connect(chapterEditor_->document(), &QTextDocument::contentsChanged,
+            this, &LibraryWindow::resizeChapterEditorToContents);
+    connect(chapterEditor_, &QPlainTextEdit::cursorPositionChanged, this, [this] {
+        if (!loadingChapter_ && bookFlow_ && bookPages_) {
+            const QPoint cursor = chapterEditor_->mapTo(
+                bookPages_, chapterEditor_->cursorRect().center());
+            bookFlow_->ensureVisible(cursor.x(), cursor.y(), 24, 96);
+        }
+    });
     chromeHoverFilter_ = new HoverFadeFilter(editorChrome_, editorChrome_);
     saveTimer_ = new QTimer(this);
     saveTimer_->setSingleShot(true);
@@ -2060,6 +2086,7 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item, bool quietStatus)
                                      false, quietStatus);
     if (opened) {
         activeBookId_ = bookId;
+        refreshBookPages();
         updateChapterNavigation();
         updateChapterStructureActions();
     }
@@ -2076,9 +2103,132 @@ bool LibraryWindow::openOutline(QTreeWidgetItem *item)
     const QString title = item->parent()->text(0) + QStringLiteral(" — Outline");
     const bool opened = openDocument(relativePath, title, {}, true);
     if (opened) {
+        refreshBookPages();
         updateChapterNavigation();
     }
     return opened;
+}
+
+void LibraryWindow::refreshBookPages()
+{
+    bookPagesLayout_->removeWidget(chapterEditor_);
+    chapterEditor_->setParent(bookPages_);
+    while (QLayoutItem *entry = bookPagesLayout_->takeAt(0)) {
+        if (QWidget *oldPage = entry->widget(); oldPage && oldPage != chapterEditor_) {
+            oldPage->hide();
+            oldPage->setParent(nullptr);
+            oldPage->deleteLater();
+        }
+        delete entry;
+    }
+
+    if (activeDocumentIsOutline_) {
+        bookPagesLayout_->addWidget(chapterEditor_);
+        resizeChapterEditorToContents();
+        return;
+    }
+    QTreeWidgetItem *bookItem = nullptr;
+    for (int index = 0; index < tree_->topLevelItemCount() && !bookItem; ++index) {
+        bookItem = findBookItem(tree_->topLevelItem(index), activeBookId_);
+    }
+    if (!bookItem) {
+        bookPagesLayout_->addWidget(chapterEditor_);
+        return;
+    }
+
+    const QString activeId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    QWidget *activePage = nullptr;
+    for (int index = 0; index < bookItem->childCount(); ++index) {
+        QTreeWidgetItem *item = bookItem->child(index);
+        if (item->data(0, ItemKindRole).toInt() != ChapterItemKind) {
+            continue;
+        }
+        const QString id = item->data(0, ChapterIdRole).toString();
+        auto *page = new QWidget(bookPages_);
+        page->setObjectName(QStringLiteral("chapter-page-") + id);
+        auto *layout = new QVBoxLayout(page);
+        layout->setContentsMargins(24, 24, 24, 24);
+        auto *heading = new QPushButton(item->text(0), page);
+        heading->setObjectName(QStringLiteral("chapter-page-heading-") + id);
+        heading->setAccessibleName(QStringLiteral("Open ") + item->text(0));
+        heading->setFlat(true);
+        layout->addWidget(heading);
+        connect(heading, &QPushButton::clicked, this, [this, id] {
+            QTreeWidgetItem *selectedBook = nullptr;
+            for (int root = 0; root < tree_->topLevelItemCount() && !selectedBook; ++root) {
+                selectedBook = findBookItem(tree_->topLevelItem(root), activeBookId_);
+            }
+            if (!selectedBook) {
+                return;
+            }
+            for (int row = 0; row < selectedBook->childCount(); ++row) {
+                QTreeWidgetItem *chapter = selectedBook->child(row);
+                if (chapter->data(0, ChapterIdRole).toString() == id && openChapter(chapter)) {
+                    tree_->setCurrentItem(chapter);
+                    return;
+                }
+            }
+        });
+        if (id == activeId) {
+            layout->addWidget(chapterEditor_);
+            activePage = page;
+        } else {
+            const QString relativePath = activeBookId_ + QStringLiteral("/chapters/") + id +
+                                         QStringLiteral(".html");
+            QByteArray bytes;
+            QString error;
+            QString preview = QStringLiteral("Chapter could not be read safely.");
+            if (LibraryPersistence::readLibraryFile(activeLibraryPath_, relativePath,
+                                                    &bytes, &error)) {
+                const LegacyChapterDocument document = LegacyChapterCodec::decode(
+                    bytes, loadChapterLinks(activeLibraryPath_, activeBookId_, id));
+                preview = document.editable() ? document.text : QString::fromUtf8(bytes);
+            }
+            auto *text = new QLabel(preview, page);
+            text->setObjectName(QStringLiteral("chapter-preview-") + id);
+            text->setWordWrap(true);
+            text->setTextFormat(Qt::PlainText);
+            text->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            layout->addWidget(text);
+        }
+        page->setAutoFillBackground(true);
+        bookPagesLayout_->addWidget(page);
+    }
+    bookPagesLayout_->addStretch();
+    resizeChapterEditorToContents();
+    if (activePage) {
+        QPointer<QWidget> currentPage(activePage);
+        QTimer::singleShot(0, this, [this, currentPage] {
+            if (currentPage && currentPage->parent() == bookPages_) {
+                bookFlow_->ensureWidgetVisible(currentPage, 0, 24);
+            }
+        });
+    }
+}
+
+void LibraryWindow::resizeChapterEditorToContents()
+{
+    if (!chapterEditor_) {
+        return;
+    }
+    const int height = qBound(480, qCeil(chapterEditor_->document()->size().height()) + 32,
+                              16000000);
+    chapterEditor_->setFixedHeight(height);
+}
+
+bool LibraryWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (chapterEditor_ && watched == chapterEditor_->viewport() &&
+        event->type() == QEvent::Wheel && bookFlow_) {
+        auto *wheel = static_cast<QWheelEvent *>(event);
+        const int distance = !wheel->pixelDelta().isNull()
+            ? wheel->pixelDelta().y()
+            : wheel->angleDelta().y() * chapterEditor_->fontMetrics().lineSpacing() / 40;
+        QScrollBar *bar = bookFlow_->verticalScrollBar();
+        bar->setValue(bar->value() - distance);
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void LibraryWindow::navigateChapter(int direction)

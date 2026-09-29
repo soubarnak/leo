@@ -19,7 +19,9 @@ class QPlainTextEdit;
 class QSyntaxHighlighter;
 class QPushButton;
 class QStackedWidget;
+class QScrollArea;
 class QTimer;
+class QVBoxLayout;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QWidget;
@@ -42,6 +44,7 @@ public:
     bool openLibrary(const QString &path);
 
 private:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void beginNewLibrary();
     void createNewLibrary();
     void chooseLibrary();
@@ -58,6 +61,8 @@ private:
     bool openChapter(QTreeWidgetItem *item, bool quietStatus = false);
     void navigateChapter(int direction);
     void updateChapterNavigation();
+    void refreshBookPages();
+    void resizeChapterEditorToContents();
     bool openOutline(QTreeWidgetItem *item);
     bool openDocument(const QString &relativePath,
                       const QString &title,
@@ -110,6 +115,9 @@ private:
     QPushButton *nextChapterButton_ = nullptr;
     QLabel *editorState_ = nullptr;
     QPlainTextEdit *chapterEditor_ = nullptr;
+    QScrollArea *bookFlow_ = nullptr;
+    QWidget *bookPages_ = nullptr;
+    QVBoxLayout *bookPagesLayout_ = nullptr;
     QSyntaxHighlighter *dropCapHighlighter_ = nullptr;
     QPushButton *saveButton_ = nullptr;
     QPushButton *repairCopyButton_ = nullptr;

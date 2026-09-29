@@ -1674,15 +1674,37 @@ private slots:
         QVERIFY(next);
         QVERIFY(!previous->isEnabled());
         QVERIFY(next->isEnabled());
+        auto *firstPage = window.findChild<QWidget *>("chapter-page-chapter-a");
+        auto *secondPage = window.findChild<QWidget *>("chapter-page-chapter-b");
+        auto *secondPreview = window.findChild<QLabel *>("chapter-preview-chapter-b");
+        QVERIFY(firstPage);
+        QVERIFY(secondPage);
+        QVERIFY(secondPreview);
+        QVERIFY(firstPage->isVisible());
+        QVERIFY(secondPage->isVisible());
+        QCOMPARE(secondPreview->text(), QStringLiteral("Second."));
         editor->setPlainText(QStringLiteral("Edited first."));
         next->click();
         QCOMPARE(editor->toPlainText(), QStringLiteral("Second."));
+        auto *firstPreview = window.findChild<QLabel *>("chapter-preview-chapter-a");
+        QVERIFY(firstPreview);
+        QCOMPARE(firstPreview->text(), QStringLiteral("Edited first."));
         QVERIFY(previous->isEnabled());
         QVERIFY(!next->isEnabled());
         QCOMPARE(readFile(QDir(bookPath).filePath(QStringLiteral("chapters/chapter-a.html"))),
                  QByteArrayLiteral("<p>Edited first.</p>"));
         previous->click();
         QCOMPARE(editor->toPlainText(), QStringLiteral("Edited first."));
+        auto *secondHeading = window.findChild<QPushButton *>("chapter-page-heading-chapter-b");
+        QVERIFY(secondHeading);
+        secondHeading->click();
+        QCOMPARE(editor->toPlainText(), QStringLiteral("Second."));
+        window.close();
+        LibraryWindow reopened;
+        QVERIFY(reopened.openLibrary(library.path()));
+        openSingleChapter(&reopened);
+        QVERIFY(reopened.findChild<QWidget *>("chapter-page-chapter-a"));
+        QVERIFY(reopened.findChild<QWidget *>("chapter-page-chapter-b"));
     }
 
     void tripleEnterSplitsAndStructuralUndoRestoresTheChapter()
