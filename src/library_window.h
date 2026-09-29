@@ -85,6 +85,8 @@ private:
     void redoChapterStructure();
     void showFindReplace();
     void undoReplacement();
+    void cutSelectionToDarlings();
+    void manageDarlings();
     void showSpellcheck();
     void addPlanningSticky();
     void addPlanningSection();

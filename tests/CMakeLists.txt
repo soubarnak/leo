@@ -22,6 +22,11 @@ target_link_libraries(leo-planning-records-test PRIVATE leo_library_browser Qt6:
 add_test(NAME leo-planning-records COMMAND leo-planning-records-test)
 set_tests_properties(leo-chapter-structure PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(leo-darling-records-test darling_records_test.cpp)
+target_link_libraries(leo-darling-records-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-darling-records COMMAND leo-darling-records-test)
+set_tests_properties(leo-darling-records PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(leo-book-search-spellcheck-test book_search_spellcheck_test.cpp)
 target_link_libraries(leo-book-search-spellcheck-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-book-search-spellcheck COMMAND leo-book-search-spellcheck-test)

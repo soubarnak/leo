@@ -9,6 +9,7 @@
 #include "release_check_dialog.h"
 #include "spellcheck.h"
 #include "chapter_links.h"
+#include "darling_records.h"
 
 #include <QAction>
 #include <QApplication>
@@ -1286,6 +1287,12 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     QAction *undoReplaceAction = editMenu->addAction(QStringLiteral("Undo replacement batch"));
     undoReplaceAction->setObjectName(QStringLiteral("book-replace-undo"));
     connect(undoReplaceAction, &QAction::triggered, this, &LibraryWindow::undoReplacement);
+    QAction *cutDarling = editMenu->addAction(QStringLiteral("Save selection to Darlings"));
+    cutDarling->setObjectName(QStringLiteral("darling-cut"));
+    connect(cutDarling, &QAction::triggered, this, &LibraryWindow::cutSelectionToDarlings);
+    QAction *manageDarling = editMenu->addAction(QStringLiteral("Manage Darlings…"));
+    manageDarling->setObjectName(QStringLiteral("darling-manage"));
+    connect(manageDarling, &QAction::triggered, this, &LibraryWindow::manageDarlings);
     QAction *spellAction = editMenu->addAction(QStringLiteral("Check Spelling…"));
     spellAction->setObjectName(QStringLiteral("chapter-spellcheck"));
     connect(spellAction, &QAction::triggered, this, &LibraryWindow::showSpellcheck);
@@ -2534,6 +2541,85 @@ void LibraryWindow::undoChapterStructure()
     const QString bookId = structureBookId_;
     applyChapterStructureResult(chapterStructure_->undo(), bookId,
                                 QStringLiteral("Chapter structure undone."));
+}
+
+void LibraryWindow::cutSelectionToDarlings()
+{
+    if (activeBookId_.isEmpty() || activeDocumentIsOutline_ || chapterReadOnly_ ||
+        pages_->currentWidget() != editorPage_) return;
+    const QTextCursor selection = chapterEditor_->textCursor();
+    if (!selection.hasSelection()) {
+        statusBar()->showMessage(QStringLiteral("Select passage text to save in Darlings."), 5000);
+        return;
+    }
+    const QString bookId = activeBookId_;
+    const QString chapterId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    const int start = selection.selectionStart();
+    const int end = selection.selectionEnd();
+    if (!savePendingEdits()) return;
+    const DarlingResult result = DarlingRecords(activeLibraryPath_, bookId).cut(chapterId, start, end);
+    if (!result.ok) {
+        QMessageBox::warning(this, QStringLiteral("Darling was not saved"), result.error);
+        return;
+    }
+    chapterStructure_.reset();
+    structureBookId_.clear();
+    refreshChapterStructureView(bookId, chapterId, true);
+    statusBar()->showMessage(QStringLiteral("Selection saved in Darlings."), 5000);
+}
+
+void LibraryWindow::manageDarlings()
+{
+    if (activeBookId_.isEmpty()) return;
+    const QString bookId = activeBookId_;
+    if (!savePendingEdits()) return;
+    DarlingRecords darlings(activeLibraryPath_, bookId);
+    QJsonArray records;
+    QString error;
+    if (!darlings.list(&records, &error)) {
+        QMessageBox::warning(this, QStringLiteral("Darlings could not be opened"), error);
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Darlings"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *list = new QListWidget(&dialog);
+    list->setObjectName(QStringLiteral("darlings-list"));
+    for (const QJsonValue &value : records) {
+        const QJsonObject record = value.toObject();
+        const QString preview = record.value(QStringLiteral("text")).toString().simplified().left(100);
+        auto *item = new QListWidgetItem(
+            record.value(QStringLiteral("chapterLabel")).toString() +
+                QStringLiteral(" — ") + preview, list);
+        item->setData(Qt::UserRole, record.value(QStringLiteral("id")).toString());
+    }
+    layout->addWidget(list);
+    auto *restore = new QPushButton(QStringLiteral("Restore selected"), &dialog);
+    restore->setObjectName(QStringLiteral("darling-restore"));
+    layout->addWidget(restore);
+    connect(restore, &QPushButton::clicked, &dialog, [this, &dialog, list, bookId, &darlings] {
+        if (!list->currentItem()) return;
+        const QString id = list->currentItem()->data(Qt::UserRole).toString();
+        DarlingResult result = darlings.restore(id);
+        if (result.review) {
+            if (QMessageBox::question(
+                    &dialog, QStringLiteral("Review restoration location"),
+                    result.error + QStringLiteral(" Restore to the end of the available chapter?"),
+                    QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+                return;
+            result = darlings.restore(id, true);
+        }
+        if (!result.ok) {
+            QMessageBox::warning(&dialog, QStringLiteral("Darling was not restored"), result.error);
+            return;
+        }
+        chapterStructure_.reset();
+        structureBookId_.clear();
+        dialog.accept();
+        refreshChapterStructureView(bookId, result.chapterId, true);
+        statusBar()->showMessage(QStringLiteral("Darling restored."), 5000);
+    });
+    dialog.exec();
 }
 
 void LibraryWindow::redoChapterStructure()

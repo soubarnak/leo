@@ -1,6 +1,7 @@
 #include "chapter_structure.h"
 
 #include <QDir>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -697,7 +698,36 @@ ChapterStructureResult ChapterStructure::deleteChapter(
         ? QString()
         : order.at(std::min(index, static_cast<int>(order.size() - 1))).toString();
     updateLastPosition(&updated, chapterId, replacementId);
-    return commitBookChange(updated, {guard}, chapterId, replacementId);
+    QVector<PlannedFile> files{guard};
+    if (!document.text.trimmed().isEmpty()) {
+        const QString darlingsPath = bookId_ + QStringLiteral("/darlings.json");
+        QByteArray darlingsBytes;
+        if (!LibraryPersistence::readLibraryFile(libraryPath_, darlingsPath,
+                                                 &darlingsBytes, &error)) return fail(error);
+        QJsonParseError parseError;
+        const QJsonDocument parsed = QJsonDocument::fromJson(darlingsBytes, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !parsed.isArray())
+            return fail(QStringLiteral("Darlings could not be verified; chapter deletion was refused."));
+        QJsonArray records = parsed.array();
+        QJsonObject darling;
+        darling.insert(QStringLiteral("id"), QStringLiteral("d-") +
+            QUuid::createUuid().toString(QUuid::WithoutBraces));
+        darling.insert(QStringLiteral("html"), QString::fromUtf8(source.originalBytes));
+        darling.insert(QStringLiteral("text"), document.text);
+        darling.insert(QStringLiteral("textComplete"), true);
+        darling.insert(QStringLiteral("chapterId"), chapterId);
+        darling.insert(QStringLiteral("chapterLabel"),
+            titlesValue.toObject().value(chapterId).toString(chapterId));
+        darling.insert(QStringLiteral("date"),
+            QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+        records.append(darling);
+        PlannedFile darlingsFile;
+        darlingsFile.change = {darlingsPath, LibraryPersistence::hash(darlingsBytes), false,
+                              QJsonDocument(records).toJson(QJsonDocument::Indented)};
+        darlingsFile.beforeBytes = darlingsBytes;
+        files.append(darlingsFile);
+    }
+    return commitBookChange(updated, files, chapterId, replacementId);
 }
 
 ChapterStructureResult ChapterStructure::undo()

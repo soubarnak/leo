@@ -10,6 +10,7 @@ add_library(leo_library_browser STATIC
   book_search.cpp
   chapter_structure.cpp
   chapter_links.cpp
+  darling_records.cpp
   font_preferences.cpp
   legacy_chapter_codec.cpp
   library_creator.cpp
