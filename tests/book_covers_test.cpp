@@ -1,4 +1,5 @@
 #include "book_covers.h"
+#include "ai_covers.h"
 #include "library_persistence.h"
 
 #include <QBuffer>
@@ -7,6 +8,7 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -16,6 +18,7 @@ private slots:
     void importFailureKeepsPriorCover();
     void modeSwitchAndRepaintPersist();
     void generatedArtworkPreservesImportedCoverAndExport();
+    void unavailableSecretProviderReportsFailureAndKeepsCover();
 };
 
 static void write(const QString &path, const QByteArray &bytes)
@@ -115,6 +118,54 @@ void BookCoversTest::generatedArtworkPreservesImportedCoverAndExport()
                                       QByteArrayLiteral("invalid image")).ok);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), before);
+}
+
+void BookCoversTest::unavailableSecretProviderReportsFailureAndKeepsCover()
+{
+    QTemporaryDir root;
+    QTemporaryDir emptyPath;
+    QVERIFY(root.isValid());
+    QVERIFY(emptyPath.isValid());
+    QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/book-one/chapters")));
+    const QByteArray metadata = QByteArrayLiteral(
+        "{\"id\":\"book-one\",\"coverMode\":\"abstract\",\"coverSeed\":\"original\",\"chapterOrder\":[\"one\"]}");
+    const QString metadataPath = root.path() + QStringLiteral("/book-one/book.json");
+    write(metadataPath, metadata);
+    write(root.path() + QStringLiteral("/book-one/chapters/one.html"),
+          QByteArrayLiteral("<p>") + QByteArrayLiteral("word ").repeated(1000) + QByteArrayLiteral("</p>"));
+    const QImage before = BookCovers::render(root.path(), QStringLiteral("book-one"), QSize(72, 108));
+    const bool pathWasSet = qEnvironmentVariableIsSet("PATH");
+    const QByteArray originalPath = qgetenv("PATH");
+    const auto restorePath = qScopeGuard([pathWasSet, originalPath] {
+        if (pathWasSet) qputenv("PATH", originalPath);
+        else qunsetenv("PATH");
+    });
+    QVERIFY(qputenv("PATH", emptyPath.path().toUtf8()));
+    AiCovers service;
+    int callbacks = 0;
+    bool succeeded = true;
+    QString message;
+    const auto completed = [&](bool ok, const QString &result) {
+        ++callbacks;
+        succeeded = ok;
+        message = result;
+    };
+    service.storeKey(QStringLiteral("test-only-dummy-key"), completed);
+    QTRY_COMPARE_WITH_TIMEOUT(callbacks, 1, 5000);
+    QVERIFY(!succeeded);
+    QVERIFY(!message.isEmpty());
+    service.generate(root.path(), QStringLiteral("book-one"), completed);
+    QTRY_COMPARE_WITH_TIMEOUT(callbacks, 2, 5000);
+    QVERIFY(!succeeded);
+    QVERIFY(message.contains(QStringLiteral("secret store")));
+    service.generate(root.path(), QStringLiteral("book-one"), completed);
+    QTRY_COMPARE_WITH_TIMEOUT(callbacks, 3, 5000);
+    QVERIFY(!succeeded);
+    QVERIFY(message.contains(QStringLiteral("secret store")));
+    QFile file(metadataPath);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), metadata);
+    QCOMPARE(BookCovers::render(root.path(), QStringLiteral("book-one"), QSize(72, 108)), before);
 }
 
 QTEST_MAIN(BookCoversTest)

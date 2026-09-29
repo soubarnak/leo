@@ -31,7 +31,7 @@ QProcess *runSecretTool(const QStringList &arguments, const QByteArray &input,
         process->closeWriteChannel();
     });
     QObject::connect(process, &QProcess::finished, process,
-        [process, done = std::move(done)](int code, QProcess::ExitStatus status) {
+        [process, done](int code, QProcess::ExitStatus status) {
             const QByteArray result = process->readAllStandardOutput();
             process->deleteLater();
             done(status == QProcess::NormalExit && code == 0, result.trimmed());
