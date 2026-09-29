@@ -6,6 +6,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QTextFragment>
 
 namespace {
@@ -491,6 +492,33 @@ QStringList classes(const HtmlTag &tag)
         QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
 }
 
+bool planningParagraph(const HtmlTag &root, const QString &body)
+{
+    if (root.name != QStringLiteral("p")) return false;
+    const QStringList rootClasses = classes(root);
+    if (rootClasses.contains(QStringLiteral("ghost")) &&
+        root.attributes.contains(QStringLiteral("data-sec-id"))) return true;
+    if (rootClasses.contains(QStringLiteral("scene-break")) &&
+        root.attributes.contains(QStringLiteral("data-sec-brk"))) return true;
+    if (root.attributes.contains(QStringLiteral("data-sec-id"))) return true;
+    qsizetype cursor = 0;
+    bool hasPlaceholder = false;
+    while (cursor < body.size()) {
+        const qsizetype start = body.indexOf(QLatin1Char('<'), cursor);
+        if (start < 0) break;
+        HtmlTag tag;
+        QString error;
+        if (!parseTag(body, start, &tag, &error)) return false;
+        cursor = tag.end;
+        if (tag.closing || tag.special) continue;
+        if (classes(tag).contains(QStringLiteral("darling-anchor"))) return false;
+        if (tag.name == QStringLiteral("span") &&
+            classes(tag).contains(QStringLiteral("ph-mark")) &&
+            tag.attributes.contains(QStringLiteral("data-sid"))) hasPlaceholder = true;
+    }
+    return hasPlaceholder;
+}
+
 bool verifyRecord(const QString &kind,
                   const QString &id,
                   const QSet<QString> &knownIds,
@@ -680,9 +708,21 @@ LegacyChapterDocument refused(const QString &reason, bool hasUtf8Bom, const QStr
     return document;
 }
 
-QString uniqueProtectedToken(const QString &source, int index)
+QString uniqueProtectedToken(const QString &source, int index, const QString &rawSource)
 {
-    const QString base = QStringLiteral("[Protected legacy content %1]").arg(index);
+    QString description;
+    if (rawSource.contains(QStringLiteral("ph-mark"))) {
+        description = QStringLiteral(" — Placeholder ⚑");
+    } else if (rawSource.contains(QStringLiteral("class=\"ghost\"")) ||
+               rawSource.contains(QStringLiteral("class='ghost'"))) {
+        const QString ghostText = QTextDocumentFragment::fromHtml(rawSource)
+                                      .toPlainText().simplified().left(90);
+        description = QStringLiteral(" — Outline ghost: %1").arg(ghostText);
+    } else if (rawSource.contains(QStringLiteral("data-sec-brk"))) {
+        description = QStringLiteral(" — Section break ***");
+    }
+    const QString base = QStringLiteral("[Protected legacy content %1%2]")
+                             .arg(index).arg(description);
     QString token = base;
     int suffix = 2;
     while (source.contains(token)) {
@@ -744,12 +784,21 @@ bool LegacyChapterDocument::hasEditableProse() const
     return false;
 }
 
+bool LegacyChapterDocument::hasOnlyPlanningProtection() const
+{
+    for (const LegacyChapterFragment &fragment : fragments) {
+        if (fragment.kind == LegacyChapterContentKind::Protected &&
+            !fragment.planningRecord) return false;
+    }
+    return true;
+}
+
 bool LegacyChapterDocument::editable() const
 {
     if (!refusalReason.isEmpty()) {
         return false;
     }
-    return fragments.isEmpty() || hasEditableProse();
+    return fragments.isEmpty() || hasEditableProse() || hasOnlyPlanningProtection();
 }
 
 LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
@@ -827,6 +876,7 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
             const bool plainBody = emptyBreak || decodeStyledText(body, &prose, &styles, &bodyError);
             if (plainSceneBreak) {
                 fragment.kind = LegacyChapterContentKind::Supported;
+                fragment.rawSource = pendingSource + chunk;
                 fragment.text = QStringLiteral("***");
                 fragment.sceneBreak = true;
                 fragment.sourcePrefix = pendingSource;
@@ -834,6 +884,7 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
                 fragment.closingTag = html.mid(closingStart, end - closingStart);
             } else if (supportedParagraphAlignment(root, &alignment) && plainBody) {
                 fragment.kind = LegacyChapterContentKind::Supported;
+                fragment.rawSource = pendingSource + chunk;
                 fragment.text = emptyBreak ? QString() : prose;
                 fragment.styles = styles;
                 fragment.alignment = alignment;
@@ -843,6 +894,7 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
             } else {
                 fragment.kind = LegacyChapterContentKind::Protected;
                 fragment.rawSource = pendingSource + chunk;
+                fragment.planningRecord = planningParagraph(root, body);
             }
         } else {
             fragment.kind = LegacyChapterContentKind::Protected;
@@ -857,7 +909,7 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
     int protectedIndex = 1;
     for (LegacyChapterFragment &fragment : document.fragments) {
         if (fragment.kind == LegacyChapterContentKind::Protected) {
-            fragment.token = uniqueProtectedToken(html, protectedIndex++);
+            fragment.token = uniqueProtectedToken(html, protectedIndex++, fragment.rawSource);
         }
     }
 
@@ -869,7 +921,8 @@ LegacyChapterDocument LegacyChapterCodec::decode(const QByteArray &source,
     }
     document.text = visibleLines.join(QLatin1Char('\n'));
 
-    if (!document.fragments.isEmpty() && !document.hasEditableProse()) {
+    if (!document.fragments.isEmpty() && !document.hasEditableProse() &&
+        !document.hasOnlyPlanningProtection()) {
         document.refusalReason = QStringLiteral(
             "This chapter contains protected legacy content but no prose region LEO can prove safe to edit.");
     }

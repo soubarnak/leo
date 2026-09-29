@@ -80,7 +80,7 @@ private:
                           QString *error) const;
     bool contentOperationSafe(const QJsonObject &book,
                               const QStringList &chapterIds,
-                              QString *error) const;
+                              QString *error, bool allowPlanningRecords = false) const;
     bool readChapter(const QString &chapterId, QByteArray *bytes,
                      QString *relativePath, QString *error) const;
     ChapterStructureResult fail(const QString &error, bool conflict = false) const;

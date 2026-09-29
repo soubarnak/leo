@@ -16,6 +16,10 @@ set_tests_properties(leo-library-organization PROPERTIES ENVIRONMENT "QT_QPA_PLA
 add_executable(leo-chapter-structure-test chapter_structure_test.cpp)
 target_link_libraries(leo-chapter-structure-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-chapter-structure COMMAND leo-chapter-structure-test)
+
+add_executable(leo-planning-records-test planning_records_test.cpp)
+target_link_libraries(leo-planning-records-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-planning-records COMMAND leo-planning-records-test)
 set_tests_properties(leo-chapter-structure PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(leo-book-search-spellcheck-test book_search_spellcheck_test.cpp)

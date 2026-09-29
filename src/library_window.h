@@ -11,6 +11,7 @@
 #include "legacy_chapter_codec.h"
 #include "library_organization.h"
 #include "library_reader.h"
+#include "planning_records.h"
 
 class QLabel;
 class QComboBox;
@@ -85,6 +86,14 @@ private:
     void showFindReplace();
     void undoReplacement();
     void showSpellcheck();
+    void addPlanningSticky();
+    void addPlanningSection();
+    void showPlanningOutline();
+    void editChapterNote();
+    void managePlanningRecords(bool sections);
+    void undoPlanningChange();
+    void applyPlanningResult(const PlanningResult &result);
+    bool ensurePlanningRecords();
     void applyPreferences(const LibraryPreferences &preferences);
     bool saveCurrentChapter();
     bool savePendingEdits();
@@ -111,6 +120,8 @@ private:
     std::unique_ptr<LibraryOrganization> organization_;
     std::unique_ptr<ChapterStructure> chapterStructure_;
     std::unique_ptr<BookSearch> bookSearch_;
+    std::unique_ptr<PlanningRecords> planningRecords_;
+    QString planningBookId_;
     QString searchBookId_;
     QString structureBookId_;
     QAction *undoStructureAction_ = nullptr;

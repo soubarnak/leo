@@ -17,6 +17,7 @@ add_library(leo_library_browser STATIC
   library_persistence.cpp
   library_reader.cpp
   library_window.cpp
+  planning_records.cpp
   release_check_dialog.cpp)
 target_sources(leo_library_browser PRIVATE spellcheck.cpp)
 target_include_directories(leo_library_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

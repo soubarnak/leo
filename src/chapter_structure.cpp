@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QRegularExpression>
 #include <QSet>
 #include <QUuid>
 
@@ -128,6 +129,31 @@ QString mergedParagraphs(const QString &first, const QString &second)
         return first;
     }
     return first + QLatin1Char('\n') + second;
+}
+
+bool hasOnlyPlanningProtection(const LegacyChapterDocument &document)
+{
+    for (const LegacyChapterFragment &fragment : document.fragments) {
+        if (fragment.kind == LegacyChapterContentKind::Protected &&
+            !fragment.planningRecord) return false;
+    }
+    return true;
+}
+
+bool planningStructureSafe(const LegacyChapterDocument &document)
+{
+    return hasOnlyPlanningProtection(document) &&
+        (document.refusalReason.isEmpty() ||
+         document.refusalReason.startsWith(
+             QStringLiteral("This chapter contains protected legacy content but no prose region")));
+}
+
+QString linkedId(const QString &source, const QString &attribute)
+{
+    const QRegularExpression expression(
+        QRegularExpression::escape(attribute) +
+        QStringLiteral("\\s*=\\s*['\"]([^'\"]+)['\"]"));
+    return expression.match(source).captured(1);
 }
 
 void updateLastPosition(QJsonObject *book, const QString &removedChapterId,
@@ -287,7 +313,7 @@ ChapterStructureResult ChapterStructure::splitChapter(
         return fail(QStringLiteral("LEO no longer has the original chapter bytes; reopen the chapter before splitting."),
                     true);
     }
-    if (!contentOperationSafe(book, {chapterId}, &error)) {
+    if (!contentOperationSafe(book, {chapterId}, &error, true)) {
         return fail(error);
     }
     LegacyChapterLinkContext links;
@@ -296,10 +322,11 @@ ChapterStructureResult ChapterStructure::splitChapter(
     }
     const LegacyChapterDocument document =
         LegacyChapterCodec::decode(source.currentBytes, links);
-    if (!document.refusalReason.isEmpty() || document.hasProtectedContent()) {
-        return fail(document.refusalReason.isEmpty()
-                        ? QStringLiteral("This chapter contains protected legacy content. Split was refused without changing the Library.")
-                        : document.refusalReason + QStringLiteral(" Split was refused without changing the Library."));
+    if (!document.refusalReason.isEmpty() || !hasOnlyPlanningProtection(document)) {
+        return fail((document.refusalReason.isEmpty()
+                         ? QStringLiteral("This chapter contains unrelated protected content.")
+                         : document.refusalReason) +
+                    QStringLiteral(" Split was refused without changing the Library."));
     }
     if (position < 0 || position > document.text.size()) {
         return fail(QStringLiteral("The split point is outside the chapter text."));
@@ -314,6 +341,116 @@ ChapterStructureResult ChapterStructure::splitChapter(
     const QString normalizedTitle = newTitle.trimmed().isEmpty()
         ? QStringLiteral("Chapter %1").arg(index + 2)
         : newTitle.trimmed();
+    if (document.hasProtectedContent()) {
+        int splitIndex = -1;
+        int textOffset = 0;
+        for (int fragmentIndex = 0; fragmentIndex < document.fragments.size(); ++fragmentIndex) {
+            const LegacyChapterFragment &fragment = document.fragments.at(fragmentIndex);
+            if (position == textOffset) splitIndex = fragmentIndex;
+            textOffset += fragment.kind == LegacyChapterContentKind::Protected
+                              ? fragment.token.size() : fragment.text.size();
+            if (position == textOffset) splitIndex = fragmentIndex + 1;
+            ++textOffset;
+        }
+        if (position == document.text.size()) splitIndex = document.fragments.size();
+        if (splitIndex < 0) {
+            return fail(QStringLiteral("Split between whole paragraphs to keep planning links together."));
+        }
+        QVector<LegacyChapterFragment> first = document.fragments.mid(0, splitIndex);
+        QVector<LegacyChapterFragment> second = document.fragments.mid(splitIndex);
+        // A section break and its paragraph always follow the same chapter.
+        for (int fragmentIndex = 0; fragmentIndex < first.size();) {
+            const QString breakId = linkedId(first.at(fragmentIndex).rawSource,
+                                             QStringLiteral("data-sec-brk"));
+            bool ghostInSecond = false;
+            for (const LegacyChapterFragment &fragment : second) {
+                if (!breakId.isEmpty() &&
+                    linkedId(fragment.rawSource, QStringLiteral("data-sec-id")) == breakId)
+                    ghostInSecond = true;
+            }
+            if (ghostInSecond) {
+                second.prepend(first.takeAt(fragmentIndex));
+            } else {
+                ++fragmentIndex;
+            }
+        }
+        QByteArray firstBytes, secondBytes;
+        if (document.hasUtf8Bom) firstBytes.append(QByteArray::fromHex("efbbbf"));
+        QSet<QString> movedStickies;
+        QSet<QString> movedSections;
+        for (const LegacyChapterFragment &fragment : first)
+            firstBytes.append(fragment.rawSource.toUtf8());
+        for (const LegacyChapterFragment &fragment : second) {
+            secondBytes.append(fragment.rawSource.toUtf8());
+            const QString sticky = linkedId(fragment.rawSource, QStringLiteral("data-sid"));
+            const QString section = linkedId(fragment.rawSource, QStringLiteral("data-sec-id"));
+            if (!sticky.isEmpty()) movedStickies.insert(sticky);
+            if (!section.isEmpty()) movedSections.insert(section);
+        }
+        secondBytes.append(document.trailingSource.toUtf8());
+        QVector<PlannedFile> files;
+        PlannedFile createChapter;
+        createChapter.change = {chapterPath(bookId_, addedId), {}, true, secondBytes};
+        createChapter.beforeExists = false;
+        files.append(createChapter);
+        PlannedFile updateChapter;
+        updateChapter.change = {chapterPath(bookId_, chapterId), source.expectedHash,
+                                false, firstBytes};
+        updateChapter.beforeBytes = source.originalBytes;
+        files.append(updateChapter);
+        if (!movedStickies.isEmpty()) {
+            const QString stickyPath = bookId_ + QStringLiteral("/stickies.json");
+            QByteArray stickyBytes;
+            if (!LibraryPersistence::readLibraryFile(libraryPath_, stickyPath,
+                                                     &stickyBytes, &error)) return fail(error);
+            const QJsonDocument stickyDocument = QJsonDocument::fromJson(stickyBytes);
+            if (!stickyDocument.isArray()) return fail(QStringLiteral("stickies.json is invalid."));
+            QJsonArray stickies = stickyDocument.array();
+            for (int stickyIndex = 0; stickyIndex < stickies.size(); ++stickyIndex) {
+                QJsonObject sticky = stickies.at(stickyIndex).toObject();
+                if (movedStickies.contains(sticky.value(QStringLiteral("id")).toString())) {
+                    sticky.insert(QStringLiteral("chapterId"), addedId);
+                    stickies.replace(stickyIndex, sticky);
+                }
+            }
+            PlannedFile stickyFile;
+            stickyFile.change = {stickyPath, LibraryPersistence::hash(stickyBytes), false,
+                                 QJsonDocument(stickies).toJson(QJsonDocument::Indented)};
+            stickyFile.beforeBytes = stickyBytes;
+            files.append(stickyFile);
+        }
+        if (!movedSections.isEmpty()) {
+            QJsonObject sections = book.value(QStringLiteral("sectionNotes")).toObject();
+            QJsonArray originalSections, newSections;
+            for (const QJsonValue &value : sections.value(chapterId).toArray()) {
+                if (movedSections.contains(value.toObject().value(QStringLiteral("id")).toString()))
+                    newSections.append(value);
+                else originalSections.append(value);
+            }
+            sections.insert(chapterId, originalSections);
+            sections.insert(addedId, newSections);
+            book.insert(QStringLiteral("sectionNotes"), sections);
+        }
+        QJsonObject titles = book.value(QStringLiteral("chapterTitles")).toObject();
+        titles.insert(addedId, normalizedTitle);
+        order.insert(index + 1, addedId);
+        book.insert(QStringLiteral("chapterOrder"), order);
+        book.insert(QStringLiteral("chapterTitles"), titles);
+        LegacyChapterLinkContext firstLinks = links;
+        LegacyChapterLinkContext secondLinks = links;
+        secondLinks.chapterId = addedId;
+        secondLinks.sectionIds = movedSections;
+        for (auto record = secondLinks.stickies.chapterIds.begin();
+             record != secondLinks.stickies.chapterIds.end(); ++record) {
+            if (movedStickies.contains(record.key())) record.value() = addedId;
+        }
+        for (const QString &sectionId : movedSections) firstLinks.sectionIds.remove(sectionId);
+        if (!planningStructureSafe(LegacyChapterCodec::decode(firstBytes, firstLinks)) ||
+            !planningStructureSafe(LegacyChapterCodec::decode(secondBytes, secondLinks))) {
+            return fail(QStringLiteral("Split would separate linked planning records."));
+        }
+        return commitBookChange(book, files, chapterId, addedId);
+    }
     QString encodeError;
     const QByteArray firstBytes = LegacyChapterCodec::encode(
         document.text.left(position), document.hasUtf8Bom, &encodeError);
@@ -371,7 +508,7 @@ ChapterStructureResult ChapterStructure::joinChapter(
 
     const QString destinationId = order.at(destinationIndex).toString();
     const QString removedId = order.at(removedIndex).toString();
-    if (!contentOperationSafe(book, {destinationId, removedId}, &error)) {
+    if (!contentOperationSafe(book, {destinationId, removedId}, &error, true)) {
         return fail(error);
     }
 
@@ -381,10 +518,11 @@ ChapterStructureResult ChapterStructure::joinChapter(
     }
     const LegacyChapterDocument currentDocument =
         LegacyChapterCodec::decode(source.currentBytes, currentLinks);
-    if (!currentDocument.refusalReason.isEmpty() || currentDocument.hasProtectedContent()) {
-        return fail(currentDocument.refusalReason.isEmpty()
-                        ? QStringLiteral("This chapter contains protected legacy content. Join was refused without changing the Library.")
-                        : currentDocument.refusalReason + QStringLiteral(" Join was refused without changing the Library."));
+    if (!planningStructureSafe(currentDocument)) {
+        return fail((currentDocument.refusalReason.isEmpty()
+                         ? QStringLiteral("This chapter contains unrelated protected content.")
+                         : currentDocument.refusalReason) +
+                    QStringLiteral(" Join was refused without changing the Library."));
     }
 
     const QString otherId = withPrevious ? destinationId : removedId;
@@ -398,23 +536,43 @@ ChapterStructureResult ChapterStructure::joinChapter(
         return fail(error);
     }
     const LegacyChapterDocument otherDocument = LegacyChapterCodec::decode(otherBytes, otherLinks);
-    if (!otherDocument.refusalReason.isEmpty() || otherDocument.hasProtectedContent()) {
-        return fail(otherDocument.refusalReason.isEmpty()
-                        ? QStringLiteral("This chapter contains protected legacy content. Join was refused without changing the Library.")
-                        : otherDocument.refusalReason + QStringLiteral(" Join was refused without changing the Library."));
+    if (!planningStructureSafe(otherDocument)) {
+        return fail((otherDocument.refusalReason.isEmpty()
+                         ? QStringLiteral("This chapter contains unrelated protected content.")
+                         : otherDocument.refusalReason) +
+                    QStringLiteral(" Join was refused without changing the Library."));
     }
 
-    const QString joinedText = withPrevious
-        ? mergedParagraphs(otherDocument.text, currentDocument.text)
-        : mergedParagraphs(currentDocument.text, otherDocument.text);
-    QString encodeError;
-    const bool hasBom = withPrevious ? otherDocument.hasUtf8Bom : currentDocument.hasUtf8Bom;
-    const QByteArray joinedBytes = LegacyChapterCodec::encode(joinedText, hasBom, &encodeError);
-    if (!encodeError.isEmpty()) {
-        return fail(encodeError);
-    }
+    const QByteArray first = withPrevious ? otherBytes : source.currentBytes;
+    QByteArray second = withPrevious ? source.currentBytes : otherBytes;
+    if (second.startsWith(QByteArray::fromHex("efbbbf"))) second.remove(0, 3);
+    const QByteArray joinedBytes = first + second;
 
     QVector<PlannedFile> changedFiles;
+    const QString stickyPath = bookId_ + QStringLiteral("/stickies.json");
+    QByteArray stickyBytes;
+    if (!LibraryPersistence::readLibraryFile(libraryPath_, stickyPath, &stickyBytes, &error)) {
+        return fail(error);
+    }
+    const QJsonDocument stickyDocument = QJsonDocument::fromJson(stickyBytes);
+    if (!stickyDocument.isArray()) return fail(QStringLiteral("stickies.json is invalid."));
+    QJsonArray stickies = stickyDocument.array();
+    bool movedSticky = false;
+    for (int index = 0; index < stickies.size(); ++index) {
+        QJsonObject sticky = stickies.at(index).toObject();
+        if (sticky.value(QStringLiteral("chapterId")).toString() == removedId) {
+            sticky.insert(QStringLiteral("chapterId"), destinationId);
+            stickies.replace(index, sticky);
+            movedSticky = true;
+        }
+    }
+    if (movedSticky) {
+        PlannedFile stickyFile;
+        stickyFile.change = {stickyPath, LibraryPersistence::hash(stickyBytes), false,
+                             QJsonDocument(stickies).toJson(QJsonDocument::Indented)};
+        stickyFile.beforeBytes = stickyBytes;
+        changedFiles.append(stickyFile);
+    }
     if (withPrevious) {
         PlannedFile destination;
         destination.change = {otherPath, LibraryPersistence::hash(otherBytes), false,
@@ -448,8 +606,41 @@ ChapterStructureResult ChapterStructure::joinChapter(
     QJsonObject titles = titlesValue.toObject();
     titles.remove(removedId);
     book.insert(QStringLiteral("chapterTitles"), titles);
-    removeEmptyMetadataEntry(&book, QStringLiteral("chapterNotes"), removedId);
-    removeEmptyMetadataEntry(&book, QStringLiteral("sectionNotes"), removedId);
+    QJsonObject chapterNotes = book.value(QStringLiteral("chapterNotes")).toObject();
+    if (chapterNotes.contains(removedId)) {
+        const QString existing = chapterNotes.value(destinationId).toString();
+        const QString incoming = chapterNotes.value(removedId).toString();
+        chapterNotes.insert(destinationId, mergedParagraphs(existing, incoming));
+        chapterNotes.remove(removedId);
+        book.insert(QStringLiteral("chapterNotes"), chapterNotes);
+    }
+    QJsonObject sectionNotes = book.value(QStringLiteral("sectionNotes")).toObject();
+    if (sectionNotes.contains(removedId)) {
+        QJsonArray joinedSections = sectionNotes.value(destinationId).toArray();
+        for (const QJsonValue &section : sectionNotes.value(removedId).toArray())
+            joinedSections.append(section);
+        sectionNotes.insert(destinationId, joinedSections);
+        sectionNotes.remove(removedId);
+        book.insert(QStringLiteral("sectionNotes"), sectionNotes);
+    }
+    LegacyChapterLinkContext joinedLinks;
+    if (!loadChapterLinks(destinationId, &joinedLinks, &error)) return fail(error);
+    for (auto record = joinedLinks.stickies.chapterIds.begin();
+         record != joinedLinks.stickies.chapterIds.end(); ++record) {
+        if (record.value() == removedId) record.value() = destinationId;
+    }
+    joinedLinks.sectionIds.clear();
+    for (const QJsonValue &section : book.value(QStringLiteral("sectionNotes"))
+                                         .toObject().value(destinationId).toArray()) {
+        const QString sectionId = section.toObject().value(QStringLiteral("id")).toString();
+        if (joinedLinks.sectionIds.contains(sectionId))
+            return fail(QStringLiteral("Joining would duplicate a section ID."));
+        joinedLinks.sectionIds.insert(sectionId);
+    }
+    const LegacyChapterDocument checkedJoin = LegacyChapterCodec::decode(joinedBytes, joinedLinks);
+    if (!planningStructureSafe(checkedJoin))
+        return fail(QStringLiteral("Joining would break a linked planning record: %1")
+                        .arg(checkedJoin.refusalReason));
     updateLastPosition(&book, removedId, destinationId);
     return commitBookChange(book, changedFiles, chapterId, destinationId);
 }
@@ -782,7 +973,7 @@ bool ChapterStructure::loadChapterLinks(const QString &chapterId,
 
 bool ChapterStructure::contentOperationSafe(const QJsonObject &book,
                                             const QStringList &chapterIds,
-                                            QString *error) const
+                                            QString *error, bool allowPlanningRecords) const
 {
     QSet<QString> affected;
     for (const QString &chapterId : chapterIds) {
@@ -801,7 +992,7 @@ bool ChapterStructure::contentOperationSafe(const QJsonObject &book,
         }
         const QJsonObject records = value.toObject();
         for (const QString &chapterId : chapterIds) {
-            if (metadataValueHasContent(records.value(chapterId))) {
+            if (!allowPlanningRecords && metadataValueHasContent(records.value(chapterId))) {
                 *error = QStringLiteral("This chapter has notes or outline links. The structural edit was refused so their ownership stays intact.");
                 return false;
             }
@@ -839,7 +1030,21 @@ bool ChapterStructure::contentOperationSafe(const QJsonObject &book,
         }
         for (auto record = records->chapterIds.cbegin();
              record != records->chapterIds.cend(); ++record) {
-            if (affected.contains(record.value())) {
+            if (allowPlanningRecords && records == &stickies &&
+                affected.contains(record.value())) {
+                QByteArray chapterBytes;
+                QString chapterRelativePath;
+                if (!readChapter(record.value(), &chapterBytes, &chapterRelativePath, error))
+                    return false;
+                const QString marker = QString::fromUtf8(chapterBytes);
+                if (!marker.contains(QStringLiteral("data-sid=\"%1\"").arg(record.key())) &&
+                    !marker.contains(QStringLiteral("data-sid='%1'").arg(record.key()))) {
+                    *error = QStringLiteral("A sticky has no marker in its chapter. The structural edit was refused.");
+                    return false;
+                }
+            }
+            if (affected.contains(record.value()) &&
+                (!allowPlanningRecords || records == &darlings)) {
                 *error = QStringLiteral("This chapter has linked sticky or Darling content. The structural edit was refused so ownership stays intact.");
                 return false;
             }

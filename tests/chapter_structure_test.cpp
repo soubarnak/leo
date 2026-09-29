@@ -1,5 +1,7 @@
 #include "chapter_structure.h"
 #include "library_reader.h"
+#include "planning_records.h"
+#include "chapter_links.h"
 
 #include <QDir>
 #include <QFile>
@@ -317,6 +319,67 @@ private slots:
         structure.invalidateHistoryForChapterEdit(
             QStringLiteral("book-1/chapters/") + added.chapterId + QStringLiteral(".html"));
         QVERIFY(!structure.canUndo());
+    }
+
+    void splitAndJoinTransferPlanningLinksWithUndo()
+    {
+        QTemporaryDir data, state;
+        ScopedEnvironmentVariable *dataVariable = nullptr;
+        ScopedEnvironmentVariable *stateVariable = nullptr;
+        isolatePersistencePaths(&data, &state, &dataVariable, &stateVariable);
+        const auto cleanupEnvironment = qScopeGuard([&] {
+            delete dataVariable;
+            delete stateVariable;
+        });
+        QTemporaryDir library = makeLibrary();
+        QVERIFY(library.isValid());
+        PlanningRecords planning(library.path(), QStringLiteral("book-1"));
+        const auto sticky = planning.addSticky(QStringLiteral("chapter-a"), QStringLiteral("Check"));
+        const auto section = planning.addSection(QStringLiteral("chapter-a"), QStringLiteral("Scene"));
+        QVERIFY(sticky.ok && section.ok);
+        const QString originalPath = QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html"));
+        const QByteArray original = readFile(originalPath);
+        const auto links = loadChapterLinks(library.path(), QStringLiteral("book-1"),
+                                            QStringLiteral("chapter-a"));
+        const LegacyChapterDocument document = LegacyChapterCodec::decode(original, links);
+        QVERIFY(document.refusalReason.isEmpty());
+        ChapterStructure structure(library.path(), QStringLiteral("book-1"));
+        QString error;
+        QVERIFY2(structure.load(&error), qPrintable(error));
+        const int splitAt = document.text.indexOf(QLatin1Char('\n')) + 1;
+        const auto split = structure.splitChapter(
+            QStringLiteral("chapter-a"), splitAt,
+            {original, LibraryPersistence::hash(original), original}, QStringLiteral("Later"));
+        QVERIFY2(split.ok, qPrintable(split.error));
+        QVERIFY(!split.chapterId.isEmpty());
+        const QJsonObject afterSplit = bookMetadata(library.path());
+        QCOMPARE(afterSplit.value(QStringLiteral("sectionNotes")).toObject()
+                     .value(split.chapterId).toArray().first().toObject()
+                     .value(QStringLiteral("id")).toString(), section.id);
+        const QJsonArray stickies = QJsonDocument::fromJson(readFile(
+            QDir(library.path()).filePath(QStringLiteral("book-1/stickies.json")))).array();
+        QCOMPARE(stickies.first().toObject().value(QStringLiteral("chapterId")).toString(),
+                 split.chapterId);
+        const QString newPath = QDir(library.path()).filePath(
+            QStringLiteral("book-1/chapters/") + split.chapterId + QStringLiteral(".html"));
+        const QByteArray moved = readFile(newPath);
+        QVERIFY(moved.contains(sticky.id.toUtf8()));
+        QVERIFY(moved.contains(section.id.toUtf8()));
+        QVERIFY(structure.undo().ok);
+        QCOMPARE(readFile(originalPath), original);
+        QVERIFY(structure.redo().ok);
+
+        const QByteArray first = readFile(originalPath);
+        const auto joined = structure.joinChapter(
+            QStringLiteral("chapter-a"), false,
+            {first, LibraryPersistence::hash(first), first});
+        QVERIFY2(joined.ok, qPrintable(joined.error));
+        QCOMPARE(readFile(originalPath), original);
+        QCOMPARE(QJsonDocument::fromJson(readFile(
+            QDir(library.path()).filePath(QStringLiteral("book-1/stickies.json"))))
+                     .array().first().toObject().value(QStringLiteral("chapterId")).toString(),
+                 QStringLiteral("chapter-a"));
     }
 };
 

@@ -305,6 +305,13 @@ public:
 protected:
     void highlightBlock(const QString &text) override
     {
+        if (text.startsWith(QStringLiteral("[Protected legacy content"))) {
+            QTextCharFormat planning;
+            planning.setForeground(QColor(QStringLiteral("#8a8178")));
+            planning.setFontItalic(true);
+            setFormat(0, text.size(), planning);
+            return;
+        }
         if (text.trimmed() == QStringLiteral("***")) {
             QTextCharFormat sceneBreak;
             sceneBreak.setForeground(QColor(QStringLiteral("#8a8178")));
@@ -1282,6 +1289,21 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     QAction *spellAction = editMenu->addAction(QStringLiteral("Check Spelling…"));
     spellAction->setObjectName(QStringLiteral("chapter-spellcheck"));
     connect(spellAction, &QAction::triggered, this, &LibraryWindow::showSpellcheck);
+    auto *planningMenu = menuBar()->addMenu(QStringLiteral("&Planning"));
+    connect(planningMenu->addAction(QStringLiteral("Show chapter and section outline…")),
+            &QAction::triggered, this, &LibraryWindow::showPlanningOutline);
+    connect(planningMenu->addAction(QStringLiteral("Add placeholder and sticky…")),
+            &QAction::triggered, this, &LibraryWindow::addPlanningSticky);
+    connect(planningMenu->addAction(QStringLiteral("Add section to outline…")),
+            &QAction::triggered, this, &LibraryWindow::addPlanningSection);
+    connect(planningMenu->addAction(QStringLiteral("Edit chapter note…")),
+            &QAction::triggered, this, &LibraryWindow::editChapterNote);
+    connect(planningMenu->addAction(QStringLiteral("Manage stickies…")),
+            &QAction::triggered, this, [this] { managePlanningRecords(false); });
+    connect(planningMenu->addAction(QStringLiteral("Manage sections…")),
+            &QAction::triggered, this, [this] { managePlanningRecords(true); });
+    connect(planningMenu->addAction(QStringLiteral("Undo planning change")),
+            &QAction::triggered, this, &LibraryWindow::undoPlanningChange);
     auto *formatMenu = menuBar()->addMenu(QStringLiteral("&Format"));
     const auto changedFormat = [this] {
         chapterDirty_ = true;
@@ -1476,6 +1498,8 @@ bool LibraryWindow::openLibrary(const QString &path)
     }
 
     activeLibraryPath_ = result.library.path;
+    planningRecords_.reset();
+    planningBookId_.clear();
     organization_ = std::move(organization);
     applyPreferences(result.library.preferences);
     activeDocumentIsOutline_ = false;
@@ -3001,6 +3025,220 @@ bool LibraryWindow::saveCurrentChapter()
     updateEditorState(savedMessage);
     updateChapterStructureActions();
     return true;
+}
+
+bool LibraryWindow::ensurePlanningRecords()
+{
+    if (activeDocumentIsOutline_ || activeBookId_.isEmpty() ||
+        activeChapterRelativePath_.isEmpty() || chapterReadOnly_ || chapterConflict_) {
+        updateEditorState(QStringLiteral("Open an editable chapter to change planning records."));
+        return false;
+    }
+    if (!savePendingEdits()) return false;
+    if (!planningRecords_ || planningBookId_ != activeBookId_) {
+        planningRecords_ = std::make_unique<PlanningRecords>(activeLibraryPath_, activeBookId_);
+        planningBookId_ = activeBookId_;
+    }
+    return true;
+}
+
+void LibraryWindow::applyPlanningResult(const PlanningResult &result)
+{
+    if (!result.ok) {
+        updateEditorState(result.error +
+                          (result.conflict ? QStringLiteral(" Reopen the Library before retrying.")
+                                           : QString()));
+        return;
+    }
+    const int position = chapterEditor_->textCursor().position();
+    const QString chapterId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    const QString title = editorTitle_->text();
+    if (openDocument(activeChapterRelativePath_, title,
+                     loadChapterLinks(activeLibraryPath_, activeBookId_, chapterId), false, true)) {
+        QTextCursor cursor = chapterEditor_->textCursor();
+        cursor.setPosition(qMin(position, chapterEditor_->toPlainText().size()));
+        chapterEditor_->setTextCursor(cursor);
+        refreshBookPages();
+        updateEditorState(QStringLiteral("Planning records saved with their chapter links."));
+    }
+}
+
+void LibraryWindow::addPlanningSticky()
+{
+    if (!ensurePlanningRecords()) return;
+    bool accepted = false;
+    const QString note = QInputDialog::getMultiLineText(
+        this, QStringLiteral("New sticky"), QStringLiteral("What needs doing here?"),
+        QString(), &accepted);
+    if (!accepted) return;
+    applyPlanningResult(planningRecords_->addSticky(
+        QFileInfo(activeChapterRelativePath_).completeBaseName(), note,
+        chapterEditor_->textCursor().blockNumber()));
+}
+
+void LibraryWindow::addPlanningSection()
+{
+    if (!ensurePlanningRecords()) return;
+    bool accepted = false;
+    const QString note = QInputDialog::getMultiLineText(
+        this, QStringLiteral("New section"), QStringLiteral("Section outline"),
+        QString(), &accepted);
+    if (!accepted) return;
+    applyPlanningResult(planningRecords_->addSection(
+        QFileInfo(activeChapterRelativePath_).completeBaseName(), note));
+}
+
+void LibraryWindow::showPlanningOutline()
+{
+    if (activeBookId_.isEmpty()) {
+        statusBar()->showMessage(QStringLiteral("Open a book to view its outline."), 5000);
+        return;
+    }
+    QByteArray bytes;
+    QString error;
+    if (!LibraryPersistence::readLibraryFile(activeLibraryPath_,
+            activeBookId_ + QStringLiteral("/book.json"), &bytes, &error)) {
+        updateEditorState(error);
+        return;
+    }
+    const QJsonObject book = QJsonDocument::fromJson(bytes).object();
+    const QJsonObject titles = book.value(QStringLiteral("chapterTitles")).toObject();
+    const QJsonObject notes = book.value(QStringLiteral("chapterNotes")).toObject();
+    const QJsonObject sections = book.value(QStringLiteral("sectionNotes")).toObject();
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Chapter and section outline"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *outline = new QTreeWidget(&dialog);
+    outline->setHeaderLabels({QStringLiteral("Chapter / section"), QStringLiteral("Note")});
+    const QJsonArray order = book.value(QStringLiteral("chapterOrder")).toArray();
+    for (int index = 0; index < order.size(); ++index) {
+        const QString chapterId = order.at(index).toString();
+        auto *chapter = new QTreeWidgetItem(outline, {
+            QStringLiteral("%1. %2").arg(index + 1).arg(titles.value(chapterId).toString()),
+            notes.value(chapterId).toString()});
+        const QJsonArray chapterSections = sections.value(chapterId).toArray();
+        for (int sectionIndex = 0; sectionIndex < chapterSections.size(); ++sectionIndex) {
+            const QJsonObject section = chapterSections.at(sectionIndex).toObject();
+            new QTreeWidgetItem(chapter, {
+                QStringLiteral("%1.%2").arg(index + 1).arg(sectionIndex + 1),
+                section.value(QStringLiteral("text")).toString()});
+        }
+    }
+    outline->expandAll();
+    outline->resizeColumnToContents(0);
+    layout->addWidget(outline);
+    auto *close = new QPushButton(QStringLiteral("Close"), &dialog);
+    connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+    layout->addWidget(close);
+    dialog.resize(640, 480);
+    dialog.exec();
+}
+
+void LibraryWindow::editChapterNote()
+{
+    if (!ensurePlanningRecords()) return;
+    QByteArray bytes;
+    QString error;
+    if (!LibraryPersistence::readLibraryFile(activeLibraryPath_,
+            activeBookId_ + QStringLiteral("/book.json"), &bytes, &error)) {
+        updateEditorState(error);
+        return;
+    }
+    const QJsonObject book = QJsonDocument::fromJson(bytes).object();
+    const QString chapterId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    const QString current = book.value(QStringLiteral("chapterNotes")).toObject()
+                                .value(chapterId).toString();
+    bool accepted = false;
+    const QString note = QInputDialog::getMultiLineText(
+        this, QStringLiteral("Chapter note"), QStringLiteral("Plan this chapter"),
+        current, &accepted);
+    if (accepted) applyPlanningResult(planningRecords_->setChapterNote(chapterId, note));
+}
+
+void LibraryWindow::managePlanningRecords(bool sections)
+{
+    if (!ensurePlanningRecords()) return;
+    const QString chapterId = QFileInfo(activeChapterRelativePath_).completeBaseName();
+    QByteArray bookBytes, recordBytes;
+    QString error;
+    if (!LibraryPersistence::readLibraryFile(activeLibraryPath_,
+            activeBookId_ + QStringLiteral("/book.json"), &bookBytes, &error)) {
+        updateEditorState(error);
+        return;
+    }
+    const QJsonObject book = QJsonDocument::fromJson(bookBytes).object();
+    QJsonArray records;
+    if (sections) {
+        records = book.value(QStringLiteral("sectionNotes")).toObject()
+                     .value(chapterId).toArray();
+    } else {
+        if (!LibraryPersistence::readLibraryFile(activeLibraryPath_,
+                activeBookId_ + QStringLiteral("/stickies.json"), &recordBytes, &error)) {
+            updateEditorState(error);
+            return;
+        }
+        for (const QJsonValue &value : QJsonDocument::fromJson(recordBytes).array()) {
+            if (value.toObject().value(QStringLiteral("chapterId")).toString() == chapterId)
+                records.append(value);
+        }
+    }
+    if (records.isEmpty()) {
+        updateEditorState(sections ? QStringLiteral("This chapter has no sections.")
+                                   : QStringLiteral("This chapter has no stickies."));
+        return;
+    }
+    QStringList choices;
+    for (const QJsonValue &value : records) {
+        const QJsonObject record = value.toObject();
+        choices.append(record.value(QStringLiteral("id")).toString() +
+                       QStringLiteral(" — ") + record.value(QStringLiteral("text")).toString().left(80));
+    }
+    bool accepted = false;
+    const QString selected = QInputDialog::getItem(
+        this, sections ? QStringLiteral("Sections") : QStringLiteral("Stickies"),
+        QStringLiteral("Choose a record"), choices, 0, false, &accepted);
+    if (!accepted) return;
+    const QJsonObject record = records.at(choices.indexOf(selected)).toObject();
+    const QString id = record.value(QStringLiteral("id")).toString();
+    const QString action = QInputDialog::getItem(
+        this, QStringLiteral("Planning record"), QStringLiteral("Action"),
+        {QStringLiteral("Edit note"), QStringLiteral("Move to chapter"),
+         QStringLiteral("Copy to chapter")}, 0, false, &accepted);
+    if (!accepted) return;
+    if (action == QStringLiteral("Edit note")) {
+        const QString note = QInputDialog::getMultiLineText(
+            this, QStringLiteral("Edit note"), QStringLiteral("Note"),
+            record.value(QStringLiteral("text")).toString(), &accepted);
+        if (!accepted) return;
+        applyPlanningResult(sections
+            ? planningRecords_->updateSection(chapterId, id, note)
+            : planningRecords_->updateSticky(id, note));
+        return;
+    }
+    QStringList destinations;
+    QStringList destinationIds;
+    const QJsonObject titles = book.value(QStringLiteral("chapterTitles")).toObject();
+    for (const QJsonValue &value : book.value(QStringLiteral("chapterOrder")).toArray()) {
+        const QString targetId = value.toString();
+        destinationIds.append(targetId);
+        destinations.append(titles.value(targetId).toString(targetId) +
+                            QStringLiteral(" (%1)").arg(targetId));
+    }
+    const QString destination = QInputDialog::getItem(
+        this, QStringLiteral("Choose chapter"), QStringLiteral("Destination"),
+        destinations, destinationIds.indexOf(chapterId), false, &accepted);
+    if (!accepted) return;
+    const QString targetId = destinationIds.at(destinations.indexOf(destination));
+    const bool copy = action == QStringLiteral("Copy to chapter");
+    applyPlanningResult(sections
+        ? planningRecords_->transferSection(chapterId, id, targetId, copy)
+        : planningRecords_->transferSticky(id, targetId, copy));
+}
+
+void LibraryWindow::undoPlanningChange()
+{
+    if (!ensurePlanningRecords()) return;
+    applyPlanningResult(planningRecords_->undo());
 }
 
 void LibraryWindow::switchToRecoveredLibrary()

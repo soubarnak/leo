@@ -30,6 +30,7 @@ struct LegacyChapterFragment {
     QString closingTag;
     QString rawSource;
     bool sceneBreak = false;
+    bool planningRecord = false;
     Qt::Alignment alignment = Qt::AlignLeft;
     QVector<LegacyTextStyleRun> styles;
 };
@@ -56,6 +57,7 @@ struct LegacyChapterDocument {
     bool hasUtf8Bom = false;
     bool hasProtectedContent() const;
     bool hasEditableProse() const;
+    bool hasOnlyPlanningProtection() const;
 
     bool editable() const;
 };
