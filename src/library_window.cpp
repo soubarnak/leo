@@ -1,6 +1,7 @@
 #include "library_window.h"
 
 #include "app_paths.h"
+#include "book_covers.h"
 #include "font_preferences.h"
 #include "legacy_chapter_codec.h"
 #include "library_creator.h"
@@ -179,9 +180,12 @@ struct ProtectedSpan {
     qsizetype end;
 };
 
-void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline)
+void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline,
+             const QString &libraryPath)
 {
     auto *bookItem = new QTreeWidgetItem(parent, {book.title, book.author});
+    bookItem->setIcon(0, QPixmap::fromImage(BookCovers::render(
+        libraryPath, book.id, QSize(72, 108))));
     bookItem->setToolTip(0, book.title);
     bookItem->setToolTip(1, book.author);
     bookItem->setData(0, BookIdRole, book.id);
@@ -1691,7 +1695,7 @@ void LibraryWindow::populateLibraryTree(const Library &library)
         for (const Book &book : books) {
             const QString outlinePath = QDir(library.path)
                                             .filePath(book.id + QStringLiteral("/outline.html"));
-            addBook(parent, book, QFileInfo::exists(outlinePath));
+            addBook(parent, book, QFileInfo::exists(outlinePath), library.path);
         }
     };
     for (const Author &author : library.authors) {
@@ -1975,11 +1979,41 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     }
     QMenu menu(this);
     QAction *addChapter = menu.addAction(QStringLiteral("Add chapter…"));
+    QMenu *covers = menu.addMenu(QStringLiteral("Cover"));
+    QAction *importCover = covers->addAction(QStringLiteral("Import image…"));
+    QAction *showImage = covers->addAction(QStringLiteral("Show imported image"));
+    QAction *showAbstract = covers->addAction(QStringLiteral("Show seeded artwork"));
+    QAction *repaintCover = covers->addAction(QStringLiteral("Repaint seeded artwork"));
+    QAction *removeCover = covers->addAction(QStringLiteral("Remove imported image"));
     QAction *rename = menu.addAction(QStringLiteral("Rename book…"));
     QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
     QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
-    if (chosen == addChapter) {
+    if (chosen == importCover || chosen == showImage || chosen == showAbstract ||
+        chosen == repaintCover || chosen == removeCover) {
+        CoverResult result;
+        if (chosen == importCover) {
+            const QString source = QFileDialog::getOpenFileName(
+                this, QStringLiteral("Choose cover image"), {},
+                QStringLiteral("Images (*.png *.jpg *.jpeg *.webp *.bmp)"));
+            if (source.isEmpty()) return;
+            result = BookCovers::importImage(activeLibraryPath_, bookId, source);
+        } else if (chosen == repaintCover) {
+            result = BookCovers::repaint(activeLibraryPath_, bookId);
+        } else {
+            result = chosen == removeCover
+                ? BookCovers::removeImage(activeLibraryPath_, bookId)
+                : BookCovers::setMode(activeLibraryPath_, bookId,
+                    chosen == showImage ? CoverMode::Image : CoverMode::Abstract);
+        }
+        if (!result.ok) {
+            QMessageBox::warning(this, QStringLiteral("Cover unchanged"), result.error);
+            return;
+        }
+        item->setIcon(0, QPixmap::fromImage(BookCovers::render(
+            activeLibraryPath_, bookId, QSize(72, 108))));
+        statusBar()->showMessage(QStringLiteral("Cover updated."));
+    } else if (chosen == addChapter) {
         if (!ensureChapterStructure(bookId) || !savePendingEdits()) {
             return;
         }

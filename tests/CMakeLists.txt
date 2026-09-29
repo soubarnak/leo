@@ -48,3 +48,7 @@ set_tests_properties(leo-writer-runtime PROPERTIES
 add_executable(leo-writing-progress-test writing_progress_test.cpp)
 target_link_libraries(leo-writing-progress-test PRIVATE leo_library_browser Qt6::Test)
 add_test(NAME leo-writing-progress COMMAND leo-writing-progress-test)
+
+add_executable(leo-book-covers-test book_covers_test.cpp)
+target_link_libraries(leo-book-covers-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-book-covers COMMAND leo-book-covers-test)
