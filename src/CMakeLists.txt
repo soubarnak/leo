@@ -19,7 +19,8 @@ add_library(leo_library_browser STATIC
   library_reader.cpp
   library_window.cpp
   planning_records.cpp
-  release_check_dialog.cpp)
+  release_check_dialog.cpp
+  writing_progress.cpp)
 target_sources(leo_library_browser PRIVATE spellcheck.cpp)
 target_include_directories(leo_library_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(leo_library_browser PUBLIC leo_platform Qt6::Core Qt6::Network Qt6::Widgets)

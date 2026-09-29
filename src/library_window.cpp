@@ -59,6 +59,10 @@
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QSpinBox>
+#include <QPainter>
+#include <QPainterPath>
+#include <QDateTime>
 #include <QSyntaxHighlighter>
 #include <QTextBlock>
 #include <QTextCharFormat>
@@ -1079,6 +1083,18 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     saveButton_->setObjectName(QStringLiteral("chapter-save"));
     connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
     editorToolbar->addWidget(saveButton_);
+    progressCount_ = new QLabel(editorChrome_);
+    progressCount_->setObjectName(QStringLiteral("writing-word-count"));
+    progressCount_->setAccessibleName(QStringLiteral("Word count"));
+    editorToolbar->addWidget(progressCount_);
+    progressGoal_ = new QLabel(editorChrome_);
+    progressGoal_->setObjectName(QStringLiteral("writing-goal-count"));
+    progressGoal_->setAccessibleName(QStringLiteral("Daily goal or sprint progress"));
+    editorToolbar->addWidget(progressGoal_);
+    auto *progressButton = new QPushButton(QStringLiteral("Goals & sprints…"), editorChrome_);
+    progressButton->setObjectName(QStringLiteral("writing-progress-button"));
+    connect(progressButton, &QPushButton::clicked, this, &LibraryWindow::showProgress);
+    editorToolbar->addWidget(progressButton);
     openRecoveredLibraryButton_ = new QPushButton(
         QStringLiteral("Switch to Recovered Library"), editorChrome_);
     openRecoveredLibraryButton_->setObjectName(QStringLiteral("chapter-open-recovered"));
@@ -1154,6 +1170,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     saveTimer_->setSingleShot(true);
     saveTimer_->setInterval(800);
     connect(saveTimer_, &QTimer::timeout, this, [this] { saveCurrentChapter(); });
+    connect(chapterEditor_, &QPlainTextEdit::selectionChanged,
+            this, &LibraryWindow::refreshProgress);
     connect(chapterEditor_, &QPlainTextEdit::textChanged, this, [this] {
         if (loadingChapter_ || chapterReadOnly_) {
             return;
@@ -1174,6 +1192,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         }
         chapterDirty_ = true;
         updateEditorState();
+        refreshProgress();
         saveTimer_->start();
         updateChapterStructureActions();
     });
@@ -1421,6 +1440,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     const auto changedFormat = [this] {
         chapterDirty_ = true;
         updateEditorState();
+        refreshProgress();
         saveTimer_->start();
     };
     const auto addCharacterAction = [this, formatMenu, changedFormat](
@@ -1611,6 +1631,9 @@ bool LibraryWindow::openLibrary(const QString &path)
     }
 
     activeLibraryPath_ = result.library.path;
+    progress_.reset();
+    sprintRunning_ = false;
+    sprintBookId_.clear();
     planningRecords_.reset();
     planningBookId_.clear();
     organization_ = std::move(organization);
@@ -2262,6 +2285,14 @@ bool LibraryWindow::openChapter(QTreeWidgetItem *item, bool quietStatus)
                                      false, quietStatus);
     if (opened) {
         activeBookId_ = bookId;
+        progress_ = std::make_unique<WritingProgress>(activeLibraryPath_);
+        QString progressError;
+        if (!progress_->load(bookId, &progressError)) {
+            progress_.reset();
+            statusBar()->showMessage(QStringLiteral("Progress unavailable: %1").arg(progressError));
+        } else {
+            refreshProgress();
+        }
         refreshBookPages();
         updateChapterNavigation();
         updateChapterStructureActions();
@@ -3319,6 +3350,17 @@ bool LibraryWindow::saveCurrentChapter()
                                                  "Plain prose is editable. Changes are saved.");
     updateEditorState(savedMessage);
     updateChapterStructureActions();
+    if (progress_ && !activeDocumentIsOutline_) {
+        QString progressError;
+        const int count = WritingProgress::countBook(activeLibraryPath_, activeBookId_,
+                                                      &progressError);
+        if (count >= 0 && !progress_->updateCount(count, QDateTime::currentDateTime(),
+                                                  &progressError)) {
+            statusBar()->showMessage(QStringLiteral("Chapter saved; progress not saved: %1")
+                                         .arg(progressError));
+        }
+        refreshProgress();
+    }
     return true;
 }
 
@@ -3666,4 +3708,178 @@ void LibraryWindow::chooseLibrary()
     if (!path.isEmpty()) {
         openLibrary(path);
     }
+}
+
+void LibraryWindow::refreshProgress()
+{
+    if (!progress_ || activeDocumentIsOutline_ || !chapterEditor_) {
+        if (progressCount_) progressCount_->clear();
+        if (progressGoal_) progressGoal_->clear();
+        return;
+    }
+    QString error;
+    const int total = WritingProgress::countBook(
+        activeLibraryPath_, activeBookId_, &error,
+        chapterReadOnly_ ? QString() : activeChapterRelativePath_,
+        chapterReadOnly_ ? QString() : chapterEditor_->toPlainText());
+    if (total < 0) {
+        progressCount_->setText(QStringLiteral("Count unavailable"));
+        progressGoal_->clear();
+        return;
+    }
+    const QString selected = chapterEditor_->textCursor().selectedText();
+    const int selectionCount = WritingProgress::countWords(selected);
+    QTextDocument renderedChapter;
+    if (chapterReadOnly_) renderedChapter.setHtml(QString::fromUtf8(sourceBytes_));
+    const int chapterCount = WritingProgress::countWords(
+        chapterReadOnly_ ? renderedChapter.toPlainText() : chapterEditor_->toPlainText());
+    QString countLabel = QStringLiteral("%1 book · %2 chapter").arg(total).arg(chapterCount);
+    if (selectionCount > 0)
+        countLabel += QStringLiteral(" · %1 selected").arg(selectionCount);
+    progressCount_->setText(countLabel);
+    const WritingProgressSnapshot snapshot = progress_->snapshot();
+    if (sprintRunning_ && sprintBookId_ == activeBookId_) {
+        const int gained = total - sprintStart_;
+        if (gained >= sprintTarget_) {
+            progressGoal_->setText(QStringLiteral("Sprint complete: %1 / %2")
+                                       .arg(gained).arg(sprintTarget_));
+        } else {
+            progressGoal_->setText(QStringLiteral("Sprint %1 / %2")
+                                       .arg(gained).arg(sprintTarget_));
+        }
+    } else {
+        const int today = snapshot.todayWords() + total - snapshot.bookWords;
+        progressGoal_->setText(snapshot.dailyGoal > 0
+            ? QStringLiteral("%1 / %2 today").arg(today).arg(snapshot.dailyGoal)
+            : QStringLiteral("%1 today").arg(today));
+    }
+}
+
+void LibraryWindow::showProgress()
+{
+    if (!progress_ || activeBookId_.isEmpty() || activeDocumentIsOutline_) {
+        statusBar()->showMessage(QStringLiteral("Open a book chapter to view goals and sprints."));
+        return;
+    }
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Writing progress"));
+    auto *layout = new QVBoxLayout(&dialog);
+    const WritingProgressSnapshot snapshot = progress_->snapshot();
+    QString countError;
+    const int total = WritingProgress::countBook(activeLibraryPath_, activeBookId_,
+        &countError, chapterReadOnly_ ? QString() : activeChapterRelativePath_,
+        chapterReadOnly_ ? QString() : chapterEditor_->toPlainText());
+    if (total < 0) {
+        layout->addWidget(new QLabel(countError, &dialog));
+        dialog.exec();
+        return;
+    }
+    layout->addWidget(new QLabel(QStringLiteral("%1 words in book · %2 today")
+        .arg(total).arg(snapshot.todayWords() + total - snapshot.bookWords), &dialog));
+    // Draw the chart with a lightweight child that uses the persisted daily history.
+    class Chart final : public QWidget {
+    public:
+        explicit Chart(const WritingProgressSnapshot &snapshot, QWidget *parent)
+            : QWidget(parent), data(snapshot) {
+            setMinimumSize(520, 170);
+            setAccessibleName(QStringLiteral("Thirty day chart of daily words and book total"));
+        }
+    protected:
+        void paintEvent(QPaintEvent *) override {
+            QPainter painter(this);
+            painter.fillRect(rect(), palette().base());
+            const QRect plot = rect().adjusted(12, 10, -12, -24);
+            int maxDaily = qMax(1, data.dailyGoal);
+            int maxTotal = qMax(1, data.bookGoal);
+            int previous = 0;
+            for (int i = 29; i >= 0; --i) {
+                const auto it = data.history.constFind(data.day.addDays(-i));
+                if (it != data.history.cend()) {
+                    maxDaily = qMax(maxDaily, qMax(0, it->end - it->start));
+                    maxTotal = qMax(maxTotal, it->end);
+                }
+            }
+            QPainterPath line;
+            for (int i = 0; i < 30; ++i) {
+                const auto it = data.history.constFind(data.day.addDays(i - 29));
+                int daily = 0;
+                if (it != data.history.cend()) {
+                    daily = qMax(0, it->end - it->start);
+                    previous = it->end;
+                }
+                const qreal x = plot.left() + plot.width() * (i + 0.5) / 30.0;
+                const qreal width = plot.width() / 30.0 - 2;
+                const qreal bar = plot.height() * 0.45 * daily / maxDaily;
+                painter.fillRect(QRectF(x - width / 2, plot.bottom() - bar, width, bar),
+                                 QColor(QStringLiteral("#3d8a6a")));
+                const qreal y = plot.bottom() - plot.height() * previous / maxTotal;
+                if (i == 0) line.moveTo(x, y); else line.lineTo(x, y);
+            }
+            painter.setPen(QPen(QColor(QStringLiteral("#c9a86a")), 2));
+            painter.drawPath(line);
+            painter.drawText(rect().adjusted(12, 0, -12, -4), Qt::AlignBottom,
+                             QStringLiteral("30 days ago       daily words (bars) · book total (line)       today"));
+        }
+    private:
+        WritingProgressSnapshot data;
+    };
+    auto *chart = new Chart(snapshot, &dialog);
+    chart->setObjectName(QStringLiteral("writing-30-day-chart"));
+    layout->addWidget(chart);
+    auto *form = new QFormLayout;
+    auto *daily = new QSpinBox(&dialog);
+    daily->setObjectName(QStringLiteral("daily-goal"));
+    daily->setRange(0, 10000000);
+    daily->setValue(snapshot.dailyGoal);
+    form->addRow(QStringLiteral("Daily goal"), daily);
+    auto *book = new QSpinBox(&dialog);
+    book->setObjectName(QStringLiteral("book-goal"));
+    book->setRange(0, 100000000);
+    book->setValue(snapshot.bookGoal);
+    form->addRow(QStringLiteral("Book goal"), book);
+    auto *boundary = new QSpinBox(&dialog);
+    boundary->setObjectName(QStringLiteral("writing-day-boundary"));
+    boundary->setRange(0, 6);
+    boundary->setSuffix(QStringLiteral(":00 local time"));
+    boundary->setValue(snapshot.dayEndsAt);
+    form->addRow(QStringLiteral("Writing day ends at"), boundary);
+    auto *target = new QSpinBox(&dialog);
+    target->setObjectName(QStringLiteral("sprint-target"));
+    target->setRange(1, 10000000);
+    target->setValue(sprintTarget_ > 0 ? sprintTarget_ : 500);
+    form->addRow(QStringLiteral("Sprint target (words)"), target);
+    layout->addLayout(form);
+    const bool activeSprint = sprintRunning_ && sprintBookId_ == activeBookId_;
+    auto *sprintButton = new QPushButton(activeSprint
+        ? (total - sprintStart_ >= sprintTarget_ ? QStringLiteral("Start new sprint")
+                                               : QStringLiteral("Cancel sprint"))
+        : QStringLiteral("Start sprint"), &dialog);
+    sprintButton->setObjectName(QStringLiteral("sprint-button"));
+    connect(sprintButton, &QPushButton::clicked, &dialog, [this, target, total, sprintButton] {
+        if (sprintRunning_ && sprintBookId_ == activeBookId_ &&
+            total - sprintStart_ < sprintTarget_) {
+            sprintRunning_ = false;
+            sprintButton->setText(QStringLiteral("Start sprint"));
+        } else {
+            sprintStart_ = total;
+            sprintTarget_ = target->value();
+            sprintBookId_ = activeBookId_;
+            sprintRunning_ = true;
+            sprintButton->setText(QStringLiteral("Cancel sprint"));
+        }
+        refreshProgress();
+    });
+    layout->addWidget(sprintButton);
+    auto *done = new QPushButton(QStringLiteral("Done"), &dialog);
+    connect(done, &QPushButton::clicked, &dialog, [&] {
+        QString error;
+        if (!progress_->setGoals(daily->value(), book->value(), boundary->value(), &error)) {
+            QMessageBox::warning(&dialog, QStringLiteral("Goals not saved"), error);
+            return;
+        }
+        refreshProgress();
+        dialog.accept();
+    });
+    layout->addWidget(done);
+    dialog.exec();
 }

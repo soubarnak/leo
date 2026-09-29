@@ -1084,6 +1084,8 @@ private slots:
         QMap<QString, QByteArray> savedHashes = libraryFileHashes(library.path());
         originalHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
         savedHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        originalHashes.remove(QStringLiteral("book-1/book.json"));
+        savedHashes.remove(QStringLiteral("book-1/book.json"));
         QCOMPARE(savedHashes, originalHashes);
 
         LibraryWindow reopened;
@@ -1204,7 +1206,11 @@ private slots:
 
         QFile savedBook(QDir(bookPath).filePath("book.json"));
         QVERIFY(savedBook.open(QIODevice::ReadOnly));
-        QCOMPARE(savedBook.readAll(), originalBook);
+        const QJsonObject savedMetadata = QJsonDocument::fromJson(savedBook.readAll()).object();
+        const QJsonObject originalMetadata = QJsonDocument::fromJson(originalBook).object();
+        QCOMPARE(savedMetadata.value(QStringLiteral("futureBookField")),
+                 originalMetadata.value(QStringLiteral("futureBookField")));
+        QVERIFY(savedMetadata.value(QStringLiteral("wordCount")).isDouble());
         QFile savedStickies(QDir(bookPath).filePath("stickies.json"));
         QVERIFY(savedStickies.open(QIODevice::ReadOnly));
         QCOMPARE(savedStickies.readAll(), originalStickies);
@@ -1212,6 +1218,8 @@ private slots:
         auto savedFileHashes = libraryFileHashes(library.path());
         originalFileHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
         savedFileHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        originalFileHashes.remove(QStringLiteral("book-1/book.json"));
+        savedFileHashes.remove(QStringLiteral("book-1/book.json"));
         QCOMPARE(savedFileHashes, originalFileHashes);
     }
 
@@ -1446,6 +1454,8 @@ private slots:
         auto savedHashes = libraryFileHashes(library.path());
         expectedHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
         savedHashes.remove(QStringLiteral("book-1/chapters/chapter-a.html"));
+        expectedHashes.remove(QStringLiteral("book-1/book.json"));
+        savedHashes.remove(QStringLiteral("book-1/book.json"));
         QCOMPARE(savedHashes, expectedHashes);
     }
 

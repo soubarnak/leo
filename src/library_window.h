@@ -12,6 +12,7 @@
 #include "library_organization.h"
 #include "library_reader.h"
 #include "planning_records.h"
+#include "writing_progress.h"
 
 class QLabel;
 class QComboBox;
@@ -105,6 +106,8 @@ private:
     void saveRepairCopy();
     void switchToRecoveredLibrary();
     void updateEditorState(const QString &message = QString());
+    void showProgress();
+    void refreshProgress();
     void closeEvent(QCloseEvent *event) override;
 
     QStackedWidget *pages_ = nullptr;
@@ -136,6 +139,13 @@ private:
     QPushButton *previousChapterButton_ = nullptr;
     QPushButton *nextChapterButton_ = nullptr;
     QLabel *editorState_ = nullptr;
+    QLabel *progressCount_ = nullptr;
+    QLabel *progressGoal_ = nullptr;
+    std::unique_ptr<WritingProgress> progress_;
+    int sprintStart_ = 0;
+    int sprintTarget_ = 0;
+    bool sprintRunning_ = false;
+    QString sprintBookId_;
     QPlainTextEdit *chapterEditor_ = nullptr;
     QScrollArea *bookFlow_ = nullptr;
     QWidget *bookPages_ = nullptr;

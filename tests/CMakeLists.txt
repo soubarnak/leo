@@ -44,3 +44,7 @@ target_link_libraries(leo-writer-runtime-test PRIVATE leo_library_browser Qt6::T
 add_test(NAME leo-writer-runtime COMMAND leo-writer-runtime-test)
 set_tests_properties(leo-writer-runtime PROPERTIES
   ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LEO_WRITER_TEST_EXECUTABLE=$<TARGET_FILE:leo-writer>")
+
+add_executable(leo-writing-progress-test writing_progress_test.cpp)
+target_link_libraries(leo-writing-progress-test PRIVATE leo_library_browser Qt6::Test)
+add_test(NAME leo-writing-progress COMMAND leo-writing-progress-test)
