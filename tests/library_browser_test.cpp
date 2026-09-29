@@ -25,6 +25,8 @@
 #include <QTreeWidget>
 #include <QtTest>
 
+#include <functional>
+
 namespace {
 
 void writeFile(const QString &path, const QByteArray &contents)
@@ -291,6 +293,54 @@ QAction *deviceHandoffAction(LibraryWindow *window)
         }
     }
     return nullptr;
+}
+
+QAbstractButton *buttonWithText(QMessageBox *dialog, const QString &text)
+{
+    for (QAbstractButton *button : dialog->buttons()) {
+        if (button->text() == text) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
+struct HandoffDialogResult {
+    bool shown = false;
+    bool answered = false;
+    QString title;
+    QString text;
+};
+
+HandoffDialogResult prepareDeviceHandoff(
+    LibraryWindow *window,
+    const std::function<QAbstractButton *(QMessageBox *)> &chooseButton)
+{
+    HandoffDialogResult result;
+    QAction *action = deviceHandoffAction(window);
+    if (!action) {
+        return result;
+    }
+
+    QTimer::singleShot(0, window, [&] {
+        auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!dialog) {
+            return;
+        }
+        result.shown = true;
+        result.title = dialog->windowTitle();
+        result.text = dialog->text();
+        QAbstractButton *button = chooseButton(dialog);
+        if (!button && !dialog->buttons().isEmpty()) {
+            button = dialog->buttons().first();
+        }
+        if (button) {
+            result.answered = true;
+            button->click();
+        }
+    });
+    action->trigger();
+    return result;
 }
 
 }
@@ -740,35 +790,17 @@ private slots:
         LibraryWindow window;
         window.show();
         QApplication::processEvents();
-        QAction *handoffAction = deviceHandoffAction(&window);
-        QVERIFY(handoffAction);
-
-        bool noLibraryDialogWasAnswered = false;
-        bool handoffDialogWasShown = false;
-        QTimer::singleShot(0, &window, [&] {
-            auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            if (dialog->windowTitle() == QStringLiteral("No Library open")) {
-                noLibraryDialogWasAnswered = true;
-                if (QAbstractButton *okButton = dialog->button(QMessageBox::Ok)) {
-                    okButton->click();
+        const HandoffDialogResult result = prepareDeviceHandoff(
+            &window, [](QMessageBox *dialog) {
+                if (dialog->windowTitle() == QStringLiteral("No Library open")) {
+                    return dialog->button(QMessageBox::Ok);
                 }
-            } else if (dialog->windowTitle() == QStringLiteral("Device handoff")) {
-                handoffDialogWasShown = true;
-                for (QAbstractButton *button : dialog->buttons()) {
-                    if (button->text() == QStringLiteral("Keep LEO Open")) {
-                        button->click();
-                        return;
-                    }
-                }
-            }
-        });
-        handoffAction->trigger();
+                return buttonWithText(dialog, QStringLiteral("Keep LEO Open"));
+            });
 
-        QVERIFY(noLibraryDialogWasAnswered);
-        QVERIFY(!handoffDialogWasShown);
+        QVERIFY(result.shown);
+        QVERIFY(result.answered);
+        QCOMPARE(result.title, QStringLiteral("No Library open"));
         QVERIFY(window.isVisible());
     }
 
@@ -825,37 +857,23 @@ private slots:
         revisedText.replace(QStringLiteral("Before prose."), QStringLiteral("Revised prose."));
         editor->setPlainText(revisedText);
 
-        QAction *handoffAction = deviceHandoffAction(&window);
-        QVERIFY(handoffAction);
-
-        bool handoffDialogWasAnswered = false;
         bool saveWasCompleteBeforeCloseChoice = false;
-        QString handoffDialogText;
-        QTimer::singleShot(0, &window, [&] {
-            auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            if (!dialog) {
-                return;
-            }
-            handoffDialogText = dialog->text();
-            saveWasCompleteBeforeCloseChoice =
-                readFile(QDir(library.path()).filePath(
-                    QStringLiteral("book-1/chapters/chapter-a.html")))
-                    .contains(QByteArrayLiteral("Revised prose."));
-            for (QAbstractButton *button : dialog->buttons()) {
-                if (button->text() == QStringLiteral("Close LEO")) {
-                    handoffDialogWasAnswered = true;
-                    button->click();
-                    return;
-                }
-            }
-        });
-        handoffAction->trigger();
+        const HandoffDialogResult result = prepareDeviceHandoff(
+            &window, [&](QMessageBox *dialog) {
+                saveWasCompleteBeforeCloseChoice =
+                    readFile(QDir(library.path()).filePath(
+                        QStringLiteral("book-1/chapters/chapter-a.html")))
+                        .contains(QByteArrayLiteral("Revised prose."));
+                return buttonWithText(dialog, QStringLiteral("Close LEO"));
+            });
 
-        QVERIFY(handoffDialogWasAnswered);
+        QVERIFY(result.shown);
+        QVERIFY(result.answered);
         QVERIFY(saveWasCompleteBeforeCloseChoice);
-        QVERIFY(handoffDialogText.contains(QStringLiteral("Syncthing")));
-        QVERIFY(handoffDialogText.contains(QStringLiteral("Up to Date")));
-        QVERIFY(handoffDialogText.contains(QStringLiteral("one device at a time")));
+        QVERIFY(result.text.contains(QStringLiteral("Syncthing")));
+        QVERIFY(result.text.contains(QStringLiteral("Up to Date")));
+        QVERIFY(result.text.contains(QStringLiteral("one device at a time")));
+        QCOMPARE(result.title, QStringLiteral("Device handoff"));
         QVERIFY(!window.isVisible());
 
         const QString chapterPath = QDir(library.path()).filePath(
@@ -900,27 +918,18 @@ private slots:
         editor->setPlainText(QStringLiteral("Draft that cannot be saved yet."));
         QVERIFY(saveButton->isEnabled());
 
-        QAction *handoffAction = deviceHandoffAction(&window);
-        QVERIFY(handoffAction);
+        const HandoffDialogResult result = prepareDeviceHandoff(
+            &window, [](QMessageBox *dialog) {
+                return dialog->windowTitle() ==
+                               QStringLiteral("Device handoff is not ready")
+                           ? dialog->button(QMessageBox::Ok)
+                           : nullptr;
+            });
 
-        bool warningWasAnswered = false;
-        QString warningText;
-        QTimer::singleShot(0, &window, [&] {
-            auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-            if (!dialog || dialog->windowTitle() !=
-                               QStringLiteral("Device handoff is not ready")) {
-                return;
-            }
-            warningText = dialog->text();
-            if (QAbstractButton *okButton = dialog->button(QMessageBox::Ok)) {
-                warningWasAnswered = true;
-                okButton->click();
-            }
-        });
-        handoffAction->trigger();
-
-        QVERIFY(warningWasAnswered);
-        QVERIFY(warningText.contains(QStringLiteral("could not finish saving")));
+        QVERIFY(result.shown);
+        QVERIFY(result.answered);
+        QCOMPARE(result.title, QStringLiteral("Device handoff is not ready"));
+        QVERIFY(result.text.contains(QStringLiteral("could not finish saving")));
         QVERIFY(window.isVisible());
         QVERIFY(editor->toPlainText().contains(
             QStringLiteral("Draft that cannot be saved yet.")));
@@ -1468,6 +1477,18 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(
             readFile(recoveredChapter).contains(QByteArrayLiteral("Newest local chapter draft.")),
             3000);
+
+        const HandoffDialogResult handoff = prepareDeviceHandoff(
+            &window, [](QMessageBox *dialog) {
+                return buttonWithText(dialog, QStringLiteral("Keep LEO Open"));
+            });
+        QVERIFY(handoff.shown);
+        QVERIFY(handoff.answered);
+        QCOMPARE(handoff.title, QStringLiteral("Device handoff"));
+        QVERIFY(handoff.text.contains(QStringLiteral("draft outside the shared Library")));
+        QVERIFY(handoff.text.contains(QStringLiteral("Recovered Library is ready")));
+        QVERIFY(window.isVisible());
+        QVERIFY(switchButton->isVisible());
 
         QFile sharedChapter(QDir(library.path()).filePath(
             QStringLiteral("book-1/chapters/chapter-a.html")));
