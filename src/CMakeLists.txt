@@ -16,6 +16,7 @@ add_library(leo_library_browser STATIC
   font_preferences.cpp
   legacy_chapter_codec.cpp
   manuscript_import.cpp
+  manuscript_export.cpp
   library_creator.cpp
   library_organization.cpp
   library_persistence.cpp

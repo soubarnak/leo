@@ -1,3 +1,4 @@
+#include "manuscript_export.h"
 #include "library_window.h"
 
 #include "app_paths.h"
@@ -2003,6 +2004,10 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     }
     QMenu menu(this);
     QAction *addChapter = menu.addAction(QStringLiteral("Add chapter…"));
+    QMenu *exports = menu.addMenu(QStringLiteral("Export manuscript"));
+    QAction *exportText = exports->addAction(QStringLiteral("Plain text…"));
+    QAction *exportMarkdown = exports->addAction(QStringLiteral("Markdown…"));
+    QAction *exportHtml = exports->addAction(QStringLiteral("HTML…"));
     QMenu *covers = menu.addMenu(QStringLiteral("Cover"));
     QAction *importCover = covers->addAction(QStringLiteral("Import image…"));
     QAction *showImage = covers->addAction(QStringLiteral("Show imported image"));
@@ -2017,6 +2022,19 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
     QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
+    if (chosen == exportText || chosen == exportMarkdown || chosen == exportHtml) {
+        if (!saveCurrentChapter()) return;
+        const auto format = chosen == exportText ? ManuscriptFormat::Text
+            : chosen == exportMarkdown ? ManuscriptFormat::Markdown : ManuscriptFormat::Html;
+        const QString filter = chosen == exportText ? QStringLiteral("Plain text (*.txt)")
+            : chosen == exportMarkdown ? QStringLiteral("Markdown (*.md)") : QStringLiteral("HTML (*.html)");
+        const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export manuscript"), {}, filter);
+        if (destination.isEmpty()) return;
+        const auto result = ManuscriptExport::write(activeLibraryPath_, bookId, format, destination);
+        if (!result.ok) QMessageBox::warning(this, QStringLiteral("Export failed"), result.error);
+        else statusBar()->showMessage(QStringLiteral("Manuscript exported."), 5000);
+        return;
+    }
     if (chosen == saveApiKey) {
         bool accepted = false;
         const QString key = QInputDialog::getText(this, QStringLiteral("OpenAI API key"),

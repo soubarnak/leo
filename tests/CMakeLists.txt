@@ -64,3 +64,8 @@ set_tests_properties(leo-manuscript-import PROPERTIES ENVIRONMENT "QT_QPA_PLATFO
 target_compile_definitions(leo-manuscript-import-test PRIVATE
   IMPORT_NEO_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/neo_import_compatibility.cjs"
   IMPORT_NEO_MAIN="${CMAKE_SOURCE_DIR}/main.js")
+
+add_executable(leo-manuscript-export-test manuscript_export_test.cpp)
+target_link_libraries(leo-manuscript-export-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-manuscript-export COMMAND leo-manuscript-export-test)
+set_tests_properties(leo-manuscript-export PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
