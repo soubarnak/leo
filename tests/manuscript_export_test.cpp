@@ -22,6 +22,8 @@ private slots:
     void failurePreservesDestination();
     void importedCoverAndAtomicReplacement();
     void inlineBreaks();
+    void epubBook_data();
+    void epubBook();
     void docxBook();
     void docxShelf();
     void independentDocxReader();
@@ -265,6 +267,62 @@ void ExportTest::independentDocxReader() {
             QCOMPARE(text.count("Real"), 1); QVERIFY(text.indexOf("Last prose") < text.indexOf("Other prose"));
         }
     }
+}
+
+void ExportTest::epubBook_data() {
+    QTest::addColumn<bool>("shelf");
+    QTest::addColumn<bool>("imported");
+    QTest::newRow("book-imported-cover") << false << true;
+    QTest::newRow("book-abstract-fallback") << false << false;
+    QTest::newRow("shelf-imported-cover") << true << true;
+}
+
+void ExportTest::epubBook() {
+    QFETCH(bool, shelf);
+    QFETCH(bool, imported);
+    QTemporaryDir dir, output;
+    auto put = [&](const QString &name, const QByteArray &data) {
+        QDir().mkpath(QFileInfo(dir.filePath(name)).absolutePath());
+        QFile f(dir.filePath(name)); QVERIFY(f.open(QIODevice::WriteOnly)); f.write(data);
+    };
+    put("b/book.json", R"({"title":"Story & more","author":"Ada","subtitle":"A tale","chapterOrder":["two","one"],"chapterTitles":{"two":"Arrival","one":"Departure"},"coverImage":"cover.png","coverMode":"painted","coverArt":{"status":"done","file":"painted.png"}})");
+    put("b/chapters/two.html", R"(<p style="text-align:right">Real <b>bold</b> <i>soft</i> <b><i>both</i></b><br/>Next line.</p><p class="scene-break">***</p><p>After scene.</p><p class="ghost" data-sec-id="g">Private outline</p><p class="scene-break" data-sec-brk="g">***</p><p><span class="ph-mark">Private placeholder</span></p><p><span class="darling-anchor">Private darling</span></p>)");
+    put("b/chapters/one.html", "<p style=\"text-align:justify\">Last prose.</p>");
+    QImage cover(4, 6, QImage::Format_RGB32); cover.fill(Qt::red);
+    if (imported) QVERIFY(cover.save(dir.filePath("b/cover.png")));
+    QImage painted(4, 6, QImage::Format_RGB32); painted.fill(Qt::blue);
+    QVERIFY(painted.save(dir.filePath("b/painted.png")));
+    put("a/book.json", R"({"title":"Other story","chapterOrder":["one"]})");
+    put("a/chapters/one.html", "<p>Other prose.</p><p class=\"ghost\">Private outline</p>");
+    put("library.json", R"({"shelves":[{"id":"s","name":"Collected","bookIds":["b","a","b"]}]})");
+    const QString target = output.filePath("book.epub");
+    const auto result = shelf ? ManuscriptExport::writeShelf(dir.path(), "s", target, ManuscriptFormat::Epub)
+        : ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Epub, target);
+    QVERIFY2(result.ok, qPrintable(result.error));
+    QProcess reader;
+    reader.start(qEnvironmentVariable("LEO_EPUB_READER_PYTHON", "python3"),
+                 {EPUB_READER_SCRIPT, target, shelf ? "shelf" : imported ? "book" : "fallback"});
+    QVERIFY(reader.waitForFinished(30000));
+    QVERIFY2(reader.exitCode() == 0, reader.readAllStandardError().constData());
+    const QString jar = qEnvironmentVariable("LEO_EPUBCHECK_JAR");
+    if (!jar.isEmpty()) {
+        QProcess validator; validator.start("java", {"-jar", jar, target});
+        QVERIFY(validator.waitForFinished(30000));
+        QVERIFY2(validator.exitCode() == 0, (validator.readAllStandardOutput() + validator.readAllStandardError()).constData());
+    }
+    QFile file(target); QVERIFY(file.open(QIODevice::ReadOnly)); const auto original = file.readAll(); file.close();
+    QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Epub, {}).ok);
+    QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Epub, dir.filePath("b/book.json")).ok);
+    QVERIFY(QFile::link(dir.filePath("b/chapters/one.html"), output.filePath("linked")));
+    QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Epub, output.filePath("linked")).ok);
+    if (shelf) {
+        QFile::remove(dir.filePath("a/chapters/one.html"));
+        QVERIFY(!ManuscriptExport::writeShelf(dir.path(), "s", target, ManuscriptFormat::Epub).ok);
+    } else {
+        put("b/chapters/one.html", "<p>Broken");
+        QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Epub, target).ok);
+    }
+    QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), original);
 }
 
 QTEST_MAIN(ExportTest)

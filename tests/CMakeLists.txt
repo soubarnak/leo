@@ -69,3 +69,5 @@ add_executable(leo-manuscript-export-test manuscript_export_test.cpp)
 target_link_libraries(leo-manuscript-export-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-manuscript-export COMMAND leo-manuscript-export-test)
 set_tests_properties(leo-manuscript-export PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+target_compile_definitions(leo-manuscript-export-test PRIVATE EPUB_READER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/epub_reader_check.py")

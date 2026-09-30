@@ -1944,16 +1944,18 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
         QAction *newBook = menu.addAction(QStringLiteral("Add a book…"));
         QAction *import = menu.addAction(QStringLiteral("Import manuscript…"));
         QAction *anthology = menu.addAction(QStringLiteral("Export DOCX anthology…"));
+        QAction *epubAnthology = menu.addAction(QStringLiteral("Export EPUB anthology…"));
         QAction *rename = menu.addAction(QStringLiteral("Rename shelf…"));
         QAction *remove = menu.addAction(QStringLiteral("Delete shelf…"));
         QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
         if (chosen == newBook) {
             createBookFromSelection();
-        } else if (chosen == anthology) {
+        } else if (chosen == anthology || chosen == epubAnthology) {
             if (!saveCurrentChapter()) return;
-            const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export anthology"), {}, QStringLiteral("Word document (*.docx)"));
+            const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export anthology"), {}, chosen == epubAnthology ? QStringLiteral("EPUB book (*.epub)") : QStringLiteral("Word document (*.docx)"));
             if (destination.isEmpty()) return;
-            const auto result = ManuscriptExport::writeShelf(activeLibraryPath_, shelfId, destination);
+            const auto result = ManuscriptExport::writeShelf(activeLibraryPath_, shelfId, destination,
+                chosen == epubAnthology ? ManuscriptFormat::Epub : ManuscriptFormat::Docx);
             if (!result.ok) QMessageBox::warning(this, QStringLiteral("Export failed"), result.error);
             else statusBar()->showMessage(QStringLiteral("Anthology exported."), 5000);
         } else if (chosen == import) {
@@ -2017,6 +2019,7 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *exportMarkdown = exports->addAction(QStringLiteral("Markdown…"));
     QAction *exportHtml = exports->addAction(QStringLiteral("HTML…"));
     QAction *exportDocx = exports->addAction(QStringLiteral("Word document…"));
+    QAction *exportEpub = exports->addAction(QStringLiteral("EPUB book…"));
     QMenu *covers = menu.addMenu(QStringLiteral("Cover"));
     QAction *importCover = covers->addAction(QStringLiteral("Import image…"));
     QAction *showImage = covers->addAction(QStringLiteral("Show imported image"));
@@ -2031,11 +2034,11 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
     QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
-    if (chosen == exportText || chosen == exportMarkdown || chosen == exportHtml || chosen == exportDocx) {
+    if (chosen == exportText || chosen == exportMarkdown || chosen == exportHtml || chosen == exportDocx || chosen == exportEpub) {
         if (!saveCurrentChapter()) return;
-        const auto format = chosen == exportText ? ManuscriptFormat::Text
+        const auto format = chosen == exportEpub ? ManuscriptFormat::Epub : chosen == exportText ? ManuscriptFormat::Text
             : chosen == exportMarkdown ? ManuscriptFormat::Markdown : chosen == exportDocx ? ManuscriptFormat::Docx : ManuscriptFormat::Html;
-        const QString filter = chosen == exportText ? QStringLiteral("Plain text (*.txt)")
+        const QString filter = chosen == exportEpub ? QStringLiteral("EPUB book (*.epub)") : chosen == exportText ? QStringLiteral("Plain text (*.txt)")
             : chosen == exportMarkdown ? QStringLiteral("Markdown (*.md)") : chosen == exportDocx ? QStringLiteral("Word document (*.docx)") : QStringLiteral("HTML (*.html)");
         const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export manuscript"), {}, filter);
         if (destination.isEmpty()) return;
