@@ -52,3 +52,15 @@ add_test(NAME leo-writing-progress COMMAND leo-writing-progress-test)
 add_executable(leo-book-covers-test book_covers_test.cpp)
 target_link_libraries(leo-book-covers-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-book-covers COMMAND leo-book-covers-test)
+
+add_executable(leo-manuscript-import-test manuscript_import_test.cpp)
+target_link_libraries(leo-manuscript-import-test PRIVATE leo_library_browser Qt6::Test)
+add_test(NAME leo-manuscript-import COMMAND leo-manuscript-import-test)
+
+target_compile_definitions(leo-manuscript-import-test PRIVATE IMPORT_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/import")
+
+set_tests_properties(leo-manuscript-import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+target_compile_definitions(leo-manuscript-import-test PRIVATE
+  IMPORT_NEO_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/neo_import_compatibility.cjs"
+  IMPORT_NEO_MAIN="${CMAKE_SOURCE_DIR}/main.js")

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "library_persistence.h"
+#include "manuscript_import.h"
 
 #include <QByteArray>
 #include <QJsonObject>
@@ -42,11 +43,14 @@ public:
     LibraryOrganizationResult removeBookFromShelves(const QString &bookId);
 
     LibraryOrganizationResult createBook(const QString &shelfId, const QString &title);
+    LibraryOrganizationResult importBook(const QString &shelfId, const ManuscriptPreview &manuscript);
     LibraryOrganizationResult renameBook(const QString &bookId, const QString &title);
     LibraryOrganizationResult moveBookToTrash(
         const QString &bookId, const LibraryTrashOperation &trashOperation = {});
 
 private:
+    LibraryOrganizationResult createBookWithContent(const QString &shelfId, const QString &title,
+                                                    const QVector<ImportedChapter> &chapters);
     LibraryOrganizationResult commitMetadata(const QJsonObject &updated);
     LibraryOrganizationResult commitBookMetadata(const QString &relativePath,
                                                  const QByteArray &oldBytes,

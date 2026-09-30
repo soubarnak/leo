@@ -15,6 +15,7 @@ add_library(leo_library_browser STATIC
   darling_records.cpp
   font_preferences.cpp
   legacy_chapter_codec.cpp
+  manuscript_import.cpp
   library_creator.cpp
   library_organization.cpp
   library_persistence.cpp
@@ -25,6 +26,8 @@ add_library(leo_library_browser STATIC
   writing_progress.cpp)
 target_sources(leo_library_browser PRIVATE spellcheck.cpp)
 target_include_directories(leo_library_browser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+find_package(ZLIB REQUIRED)
+target_link_libraries(leo_library_browser PRIVATE ZLIB::ZLIB)
 target_link_libraries(leo_library_browser PUBLIC leo_platform Qt6::Core Qt6::Network Qt6::Widgets)
 target_compile_options(leo_library_browser PRIVATE -Wall -Wextra -Wpedantic)
 

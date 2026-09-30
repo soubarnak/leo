@@ -1941,11 +1941,33 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     if (!shelfId.isEmpty()) {
         QMenu menu(this);
         QAction *newBook = menu.addAction(QStringLiteral("Add a book…"));
+        QAction *import = menu.addAction(QStringLiteral("Import manuscript…"));
         QAction *rename = menu.addAction(QStringLiteral("Rename shelf…"));
         QAction *remove = menu.addAction(QStringLiteral("Delete shelf…"));
         QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
         if (chosen == newBook) {
             createBookFromSelection();
+        } else if (chosen == import) {
+            const QString source = QFileDialog::getOpenFileName(this, QStringLiteral("Import manuscript"),
+                QString(), QStringLiteral("Manuscripts (*.docx *.txt *.md *.markdown)"));
+            if (source.isEmpty()) return;
+            const auto preview = ManuscriptImport::read(source);
+            QString details = preview.warnings.join(QLatin1Char('\n'));
+            if (!preview.ok()) {
+                QMessageBox::warning(this, QStringLiteral("Import refused"), preview.error + "\n" + details);
+                return;
+            }
+            QStringList headings;
+            for (const auto &chapter : preview.chapters) headings.append(chapter.title);
+            details = QStringLiteral("Title: %1\nChapters: %2\nScene breaks: %3\n\n%4\n\n%5")
+                .arg(preview.title).arg(preview.chapters.size()).arg(preview.sceneBreaks)
+                .arg(headings.join(QLatin1Char('\n')), details);
+            QMessageBox confirm(QMessageBox::Question, QStringLiteral("Import preview"), details,
+                                QMessageBox::Ok | QMessageBox::Cancel, this);
+            confirm.setTextFormat(Qt::PlainText);
+            if (confirm.exec() != QMessageBox::Ok) return;
+            finishOrganizationChange(organization_->importBook(shelfId, preview),
+                                     QStringLiteral("Manuscript imported."));
         } else if (chosen == rename) {
             bool accepted = false;
             const QString name = QInputDialog::getText(

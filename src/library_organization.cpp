@@ -1,6 +1,9 @@
 #include "library_organization.h"
 
 #include "library_persistence.h"
+#include "legacy_chapter_codec.h"
+#include <QRegularExpression>
+#include <QStringDecoder>
 
 #include <QDateTime>
 #include <QDir>
@@ -1138,6 +1141,28 @@ LibraryOrganizationResult LibraryOrganization::removeBookFromShelves(const QStri
 LibraryOrganizationResult LibraryOrganization::createBook(const QString &shelfId,
                                                             const QString &title)
 {
+    return createBookWithContent(shelfId, title, {});
+}
+
+LibraryOrganizationResult LibraryOrganization::importBook(const QString &shelfId,
+                                                           const ManuscriptPreview &manuscript)
+{
+    if (!manuscript.ok()) return failed(manuscript.error.isEmpty()
+        ? QStringLiteral("No manuscript prose found.") : manuscript.error);
+    for (const auto &chapter : manuscript.chapters) {
+        QStringDecoder decoder(QStringDecoder::Utf8);
+        QString html = decoder(chapter.html);
+        html.remove(QRegularExpression(QStringLiteral("</?(?:p|b|i)>|<br>|<p class=\"scene-break\">")));
+        const auto decoded = LegacyChapterCodec::decode(chapter.html);
+        if (decoder.hasError() || html.contains(QLatin1Char('<')) || !decoded.editable() || decoded.hasProtectedContent())
+            return failed(QStringLiteral("Unsafe or unsupported imported chapter markup; nothing imported."));
+    }
+    return createBookWithContent(shelfId, manuscript.title, manuscript.chapters);
+}
+
+LibraryOrganizationResult LibraryOrganization::createBookWithContent(
+    const QString &shelfId, const QString &title, const QVector<ImportedChapter> &chapters)
+{
     if (!loaded_) {
         return failed(QStringLiteral("Open a Library before creating a book."));
     }
@@ -1177,6 +1202,14 @@ LibraryOrganizationResult LibraryOrganization::createBook(const QString &shelfId
         chapterOrder.append(chapterId);
         chapterTitles.insert(chapterId, QStringLiteral("Chapter 1"));
     }
+    QVector<QString> importedIds;
+    if (!chapters.isEmpty()) {
+        chapterOrder = {}; chapterTitles = {};
+        for (const auto &chapter : chapters) {
+            const QString id = newId(QStringLiteral("chapter-"));
+            importedIds.append(id); chapterOrder.append(id); chapterTitles.insert(id, chapter.title);
+        }
+    }
     const QString normalizedTitle = title.trimmed().isEmpty()
                                         ? QStringLiteral("Untitled")
                                         : title.trimmed();
@@ -1214,11 +1247,16 @@ LibraryOrganizationResult LibraryOrganization::createBook(const QString &shelfId
         writeNewBookFile(staging.path(), QStringLiteral("stickies.json"),
                          QByteArrayLiteral("[]\n"), &error);
     if (!filesWritten ||
-        (!chapterId.isEmpty() &&
+        (chapters.isEmpty() && !chapterId.isEmpty() &&
          !writeNewBookFile(staging.path(), QStringLiteral("chapters/") + chapterId +
                                                 QStringLiteral(".html"),
                            QByteArrayLiteral("<p><br></p>\n"), &error))) {
         return failed(error);
+    }
+
+    for (int i = 0; i < chapters.size(); ++i) {
+        if (!writeNewBookFile(staging.path(), QStringLiteral("chapters/") + importedIds.at(i) +
+                             QStringLiteral(".html"), chapters.at(i).html, &error)) return failed(error);
     }
 
     const QString stagedDirectory = QStringLiteral(".leo-staging/") +
