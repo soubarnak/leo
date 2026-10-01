@@ -9,7 +9,7 @@ Page layout follows the NEO baseline:
 - Chapter headings, a larger opening letter, scene breaks (`* * *`), bold and italic runs, and centered, right-aligned or justified paragraphs. Long paragraphs break between lines and continue on the next page.
 - Ghost prompts, placeholders and Darling anchors are left out, as in every other export.
 
-Text uses DejaVu Serif with DejaVu Sans behind it, then fontconfig fallback for other scripts. DejaVu is preferred because some installed Noto Arabic builds extract as broken characters; the `fonts-dejavu-core` package is a dependency. Zero-width joiners are not kept in extracted text, so an emoji sequence copies as its separate emoji.
+Text uses DejaVu Serif with DejaVu Sans behind it, then fontconfig fallback for other scripts. DejaVu is preferred because some installed Noto Arabic builds extract as broken characters; `fonts-dejavu-core` is a dependency. `fonts-noto-core` and `fonts-noto-color-emoji` are recommended: without them a Library containing Bengali or emoji cannot be exported, and the export stops with a font error. Zero-width joiners are not kept in extracted text, so an emoji sequence copies as its separate emoji.
 
 ## Failure behavior
 
@@ -31,6 +31,14 @@ Intended differences from NEO, which need maintainer approval:
 - Scene breaks read `* * *` in dark gray rather than `***` at 8px letter spacing.
 - Text is DejaVu Serif rather than the system's Georgia fallback, so line breaks inside paragraphs can differ slightly.
 
+## Debian stable run
+
+Run 2026-10-01 in a rootless podman container on Debian 13.7 (trixie), Qt 6.8.2, GCC 14.2:
+
+- `dpkg-buildpackage` builds the package and all 14 test targets pass, including 23 export tests with Debian's `python3-pypdf` and `python3-pdfminer`.
+- A clean trixie container with `leo-writer_0.2.0_amd64.deb` installed (plus its recommended fonts) passes every PDF test, including the NEO baseline comparison on A4 and Letter.
+- With only the declared dependencies installed (DejaVu fonts), the Bengali and emoji fixtures fail with "No installed font covers every character in this book", which is why the Noto fonts are now recommended.
+
 ## Not yet verified
 
-Debian stable with its own font set has not been run, and the fixture is synthetic; copied manuscripts have not been compared. Both are release gates in the parity matrix.
+Copied manuscripts have not been compared with NEO, and nobody has inspected rendered pages in a viewer. Both are release gates in the parity matrix.

@@ -48,10 +48,12 @@ set_tests_properties(leo-writer-runtime PROPERTIES
 add_executable(leo-writing-progress-test writing_progress_test.cpp)
 target_link_libraries(leo-writing-progress-test PRIVATE leo_library_browser Qt6::Test)
 add_test(NAME leo-writing-progress COMMAND leo-writing-progress-test)
+set_tests_properties(leo-writing-progress PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(leo-book-covers-test book_covers_test.cpp)
 target_link_libraries(leo-book-covers-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-book-covers COMMAND leo-book-covers-test)
+set_tests_properties(leo-book-covers PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(leo-manuscript-import-test manuscript_import_test.cpp)
 target_link_libraries(leo-manuscript-import-test PRIVATE leo_library_browser Qt6::Test)
@@ -73,3 +75,12 @@ set_tests_properties(leo-manuscript-export PROPERTIES ENVIRONMENT "QT_QPA_PLATFO
 target_compile_definitions(leo-manuscript-export-test PRIVATE EPUB_READER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/epub_reader_check.py")
 target_compile_definitions(leo-manuscript-export-test PRIVATE PDF_READER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/pdf_reader_check.py")
 target_compile_definitions(leo-manuscript-export-test PRIVATE PDF_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/pdf")
+
+# Each test gets private XDG directories so tests that persist app state cannot collide when ctest runs in parallel.
+get_property(leo_all_tests DIRECTORY PROPERTY TESTS)
+foreach(leo_test IN LISTS leo_all_tests)
+  set(leo_xdg "${CMAKE_CURRENT_BINARY_DIR}/xdg/${leo_test}")
+  set_property(TEST ${leo_test} APPEND PROPERTY ENVIRONMENT
+    "XDG_DATA_HOME=${leo_xdg}/data" "XDG_STATE_HOME=${leo_xdg}/state"
+    "XDG_CONFIG_HOME=${leo_xdg}/config" "XDG_CACHE_HOME=${leo_xdg}/cache")
+endforeach()
