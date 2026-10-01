@@ -154,6 +154,10 @@ QProcessEnvironment testEnvironment(const QString &runtime, const QString &state
 {
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+    // A desktop platform theme such as gtk3 opens the display through
+    // XDG_RUNTIME_DIR; with a private runtime directory it fails and exits.
+    environment.remove(QStringLiteral("QT_QPA_PLATFORMTHEME"));
+    environment.remove(QStringLiteral("QT_QPA_PLATFORMTHEME_QT6"));
     environment.insert(QStringLiteral("XDG_RUNTIME_DIR"), runtime);
     environment.insert(QStringLiteral("XDG_STATE_HOME"), state);
     return environment;
