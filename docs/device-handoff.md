@@ -76,11 +76,59 @@ This proves real Syncthing synchronization and Pocket's bridge code against
 synced files. It does **not** run the Android app, its WebView, Capacitor's
 native filesystem plugin (a node `fs` mock stands in), Android permissions, or
 a real phone, and it does not drive LEO's Qt window (LEO's side is covered by
-the round-trip test above). It is not final proof of the Pocket handoff.
+the round-trip test above). The Android emulator test below covers the app.
+
+### Android emulator evidence (opt-in)
+
+`tests/handoff/android_pocket_handoff.sh` runs the same handoff through the real
+Android stack, in an emulator, in rootless podman:
+
+- the real NEO Pocket debug APK (built from this checkout) and the official
+  Syncthing for Android app (`syncthing/syncthing-android` 1.28.1, checksum
+  pinned) run in an Android 15 (API 35, `google_apis` x86_64) emulator with KVM;
+- a desktop Syncthing (official image) in a second container shares the
+  emulator's network namespace, so the phone dials it at `10.0.2.2:22000`
+  (discovery, relays and NAT off);
+- Pocket gets All files access (`appops MANAGE_EXTERNAL_STORAGE`), and the
+  Syncthing Android app delivers a synthetic Library into
+  `/storage/emulated/0/Documents/NEO Library`;
+- desktop edits go through NEO's real `main.js` handlers; the phone edit is made
+  in Pocket's real WebView with adb touch and key events (open the book, tap into
+  the chapter, Ctrl+End, Enter, type, wait past the autosave, tap **Shelf**, close
+  the app). Chrome DevTools is used only to locate elements and read state;
+- after each step it waits for both sides to match file by file, then checks both
+  desktop and the app on the device: all three edits in order, chapter order and
+  titles, stickies, darlings, the protected sticky marker, unknown JSON keys and a
+  byte-identical unknown `.bin` file. Screenshots, logcat and logs land in a
+  gitignored evidence directory.
+
+Run it with `LEO_ANDROID_CACHE=<big-dir> LEO_ANDROID_ACCEPT_LICENSES=1 bash
+tests/handoff/android_pocket_handoff.sh` (first run downloads about 6 GB: Android
+SDK, system image, Gradle; later runs take about six minutes), or configure with
+`-DLEO_RUN_ANDROID_POCKET_TESTS=ON` and run `ctest -L android`. It exits 77
+(skipped) without podman, `/dev/kvm`, node, or when the downloads are unavailable.
+`/dev/kvm` access from rootless podman needs `crun`; if it is not installed the
+script downloads the pinned static release into the cache.
+
+Recorded run (2026-10-01, leo `c7179e3` plus the uncommitted changes that added
+this test): passed on an emulated Android 15 (API 35), WebView 124.0.6367.219,
+Syncthing for Android 1.28.1, desktop Syncthing v2.1.5, Pocket debug build.
+
+What the real editor does to a Library (all asserted, none lost): Pocket adds
+`authors` and `hintShown` to `library.json` and `chapterNotes`, `wordCount` and
+`dailyCounts` to `book.json`; it rewrites the chapter HTML it saves, so an inner
+`<span>` inside an unknown `<div>` is unwrapped and `inputmode="none"` is added to
+the sticky marker (the unknown element, its attribute and text, and the marker
+itself survive). The headless tests above do not exercise these because they never
+run the editor.
 
 ## Manual release gate
 
-The handoff through the real NEO Pocket Android app on a phone is not automated;
-the opt-in podman test above covers only Syncthing and the bridge code. It stays
-a manual check that must pass before release, following the steps in the
-"Device handoff check" section of [`pocket/README.md`](../pocket/README.md).
+Handoff through the real NEO Pocket app is now automated on an emulator, but an
+emulator is not a physical phone. The check on a real phone stays a manual release
+gate, following the "Device handoff check" section of
+[`pocket/README.md`](../pocket/README.md), until it has been done once on hardware.
+Still not proven: vendor Android builds and their storage or battery restrictions,
+the current Syncthing for Android 1.28.1 (December 2024, the latest release of that app) on a real
+network, relays or discovery, a signed release APK (the test uses the debug build),
+and LEO's own **Prepare Device Handoff…** window with a real Syncthing.

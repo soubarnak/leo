@@ -99,3 +99,17 @@ if(LEO_RUN_SYNCTHING_TESTS)
   set_tests_properties(leo-syncthing-handoff PROPERTIES
     LABELS syncthing SKIP_RETURN_CODE 77 TIMEOUT 600)
 endif()
+
+# Opt-in: the real NEO Pocket debug APK and the official Syncthing Android app in
+# an Android emulator (KVM, rootless podman) syncing with a desktop Syncthing
+# container. Large first run (~6 GB cache: Android SDK, system image, Gradle) and
+# downloads; set LEO_ANDROID_CACHE and LEO_ANDROID_ACCEPT_LICENSES=1 for it. Skips
+# (77) when podman, /dev/kvm, node or the downloads are unavailable. Enable with
+# -DLEO_RUN_ANDROID_POCKET_TESTS=ON, run with `ctest -L android`.
+option(LEO_RUN_ANDROID_POCKET_TESTS "Register the Android emulator Pocket device handoff test" OFF)
+if(LEO_RUN_ANDROID_POCKET_TESTS)
+  add_test(NAME leo-android-pocket-handoff
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/handoff/android_pocket_handoff.sh ${CMAKE_SOURCE_DIR})
+  set_tests_properties(leo-android-pocket-handoff PROPERTIES
+    LABELS android SKIP_RETURN_CODE 77 TIMEOUT 3600)
+endif()

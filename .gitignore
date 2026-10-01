@@ -19,3 +19,4 @@ pocket/node_modules/
 pocket/www/app.js
 pocket/www/covers.js
 pocket/www/styles.css
+tests/handoff/android-evidence/

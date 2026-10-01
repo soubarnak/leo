@@ -17,6 +17,7 @@ json(path.join(book, 'book.json'), {
   id: 'book-1', title: 'First Title', subtitle: 'A subtitle', series: 'A series', author: 'Ada Lovelace',
   wordGoal: 1200, created: '2026-09-01T00:00:00.000Z', modified: '2026-09-28T00:00:00.000Z',
   chapterOrder: ['chapter-a', 'chapter-b'],
+  tabNames: { notes: 'Notes', outline: 'Outline' }, // every NEO/LEO-made book.json has this; Pocket's openBook reads it
   chapterTitles: { 'chapter-a': 'Arrival', 'chapter-b': 'Departure' },
   lastPosition: { chapterId: 'chapter-a', scroll: 12 },
   futureBookField: { keep: [1, 'future'] }

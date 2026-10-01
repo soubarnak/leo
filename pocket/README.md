@@ -43,9 +43,12 @@ Edit a Library on one device at a time. Do not open it for editing on another
 device until the prior device has closed and Syncthing reports **Up to Date**.
 See [`docs/device-handoff.md`](../docs/device-handoff.md) for the handoff rules
 and the automated evidence. The opt-in `tests/handoff/syncthing_handoff.sh`
-(`ctest -L syncthing`) exercises real Syncthing and this bridge's code headlessly,
-but not the Android app or WebView, so this on-phone check remains a manual
-release gate.
+(`ctest -L syncthing`) exercises real Syncthing and this bridge's code headlessly.
+The opt-in `tests/handoff/android_pocket_handoff.sh` (`ctest -L android`) runs this
+whole check against the real Pocket debug APK and the Syncthing Android app in an
+Android 15 emulator (typed into the real WebView, KVM, rootless podman); see the
+doc for what it proved on 2026-10-01. It is an emulator, so the check on a
+physical phone remains the manual release gate.
 
 Local builds need Android Studio and: `cd pocket && npm install`, copy
 `../app.js`, `../covers.js` and `../styles.css` into `www/`, `npx cap sync android`, then
