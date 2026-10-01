@@ -36,6 +36,8 @@ private slots:
     void pdfLetterAndLongParagraph();
     void pdfFailurePreservesDestination();
     void pdfUncoveredGlyphsFail();
+    void pdfMatchesNeoBaseline_data();
+    void pdfMatchesNeoBaseline();
 };
 
 void ExportTest::orderedProse_data() {
@@ -471,6 +473,39 @@ void ExportTest::pdfUncoveredGlyphsFail() {
     QVERIFY(!result.ok);
     QVERIFY2(result.error.contains("font"), qPrintable(result.error));
     QVERIFY(!QFileInfo::exists(output.filePath("x.pdf")));
+}
+
+// NEO 0.7.9 baseline for the synthetic fixture (tests/fixtures/pdf): its own buildHtml and renderPDF output,
+// recorded from prototype/pdf-export evidence. Chapter 2 continues on later pages at these paragraph numbers.
+void ExportTest::pdfMatchesNeoBaseline_data() {
+    QTest::addColumn<int>("territory");
+    QTest::addColumn<QList<int>>("continuations");
+    QTest::newRow("A4") << int(QLocale::UnitedKingdom) << QList<int>{14, 29};
+    QTest::newRow("Letter") << int(QLocale::UnitedStates) << QList<int>{12, 26};
+}
+
+void ExportTest::pdfMatchesNeoBaseline() {
+    QFETCH(int, territory);
+    QFETCH(QList<int>, continuations);
+    QLocale::setDefault(QLocale(QLocale::English, QLocale::Territory(territory)));
+    QTemporaryDir output;
+    const auto result = ManuscriptExport::write(PDF_FIXTURES, "b", ManuscriptFormat::Pdf, output.filePath("n.pdf"));
+    QVERIFY2(result.ok, qPrintable(result.error));
+    QString error;
+    const QJsonObject pdf = readPdf(output.filePath("n.pdf"), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    if (pdf.isEmpty()) QSKIP("pypdf and pdfminer.six are not installed; set LEO_PDF_READER_PYTHON");
+    const QJsonArray pages = pdf.value("pages").toArray();
+    QCOMPARE(pages.size(), 4 + continuations.size());
+    QVERIFY(pages.at(2).toObject().value("pdfminer").toString().contains("Chapter 1"));
+    QVERIFY(pages.at(3).toObject().value("pdfminer").toString().contains("Chapter 2"));
+    QList<int> starts;
+    for (int i = 4; i < pages.size(); ++i) {
+        const auto match = QRegularExpression("Paragraph (\\d+)\\.").match(pages.at(i).toObject().value("pdfminer").toString());
+        QVERIFY(match.hasMatch());
+        starts << match.captured(1).toInt();
+    }
+    QCOMPARE(starts, continuations);
 }
 
 QTEST_MAIN(ExportTest)

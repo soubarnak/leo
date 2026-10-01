@@ -72,3 +72,4 @@ set_tests_properties(leo-manuscript-export PROPERTIES ENVIRONMENT "QT_QPA_PLATFO
 
 target_compile_definitions(leo-manuscript-export-test PRIVATE EPUB_READER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/epub_reader_check.py")
 target_compile_definitions(leo-manuscript-export-test PRIVATE PDF_READER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/pdf_reader_check.py")
+target_compile_definitions(leo-manuscript-export-test PRIVATE PDF_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/pdf")
