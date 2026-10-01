@@ -26,6 +26,15 @@ QString systemSerifFamily()
     return QFontInfo(font).family();
 }
 
+QString bodyFallbackFamily()
+{
+    const QString installed = installedFamily({QStringLiteral("Georgia"),
+                                               QStringLiteral("Liberation Serif"),
+                                               QStringLiteral("DejaVu Serif"),
+                                               QStringLiteral("Noto Serif")});
+    return installed.isEmpty() ? systemSerifFamily() : installed;
+}
+
 QString dropCapFamily(const QString &style)
 {
     if (style == QStringLiteral("fantasy")) {

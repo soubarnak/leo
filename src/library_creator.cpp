@@ -96,7 +96,7 @@ NewLibraryResult LibraryCreator::create(const NewLibraryOptions &options)
     QString bodyFont = options.bodyFont.trimmed();
     if (bodyFont.compare(QStringLiteral("Serif"), Qt::CaseInsensitive) == 0 ||
         FontPreferences::installedFamily({bodyFont}).isEmpty()) {
-        bodyFont = FontPreferences::systemSerifFamily();
+        bodyFont = FontPreferences::bodyFallbackFamily();
         result.usedPreferenceFallback = true;
     }
 

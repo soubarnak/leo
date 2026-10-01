@@ -972,8 +972,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         }
     }
     if (onboardingBodyFont_->count() == 0) {
-        const QString systemSerif = FontPreferences::systemSerifFamily();
-        onboardingBodyFont_->addItem(systemSerif, systemSerif);
+        const QString fallbackFont = FontPreferences::bodyFallbackFamily();
+        onboardingBodyFont_->addItem(fallbackFont, fallbackFont);
     }
     onboardingForm->addRow(QStringLiteral("Body typeface"), onboardingBodyFont_);
     onboardingDropCap_ = new QComboBox(onboardingPage_);
@@ -1320,6 +1320,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     auto *themeGroup = new QActionGroup(this);
     paperAction_ = themeMenu->addAction(QStringLiteral("Paper"));
     nightAction_ = themeMenu->addAction(QStringLiteral("Night"));
+    paperAction_->setObjectName(QStringLiteral("view-theme-paper"));
+    nightAction_->setObjectName(QStringLiteral("view-theme-night"));
     for (QAction *action : {paperAction_, nightAction_}) {
         action->setCheckable(true);
         themeGroup->addAction(action);
@@ -1331,16 +1333,19 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         savePresentationPreference(QStringLiteral("pageTheme"), QStringLiteral("night"));
     });
     brightAction_ = viewMenu->addAction(QStringLiteral("Brighter controls"));
+    brightAction_->setObjectName(QStringLiteral("view-brighter-controls"));
     brightAction_->setCheckable(true);
     connect(brightAction_, &QAction::triggered, this, [this](bool checked) {
         savePresentationPreference(QStringLiteral("uiBright"), checked);
     });
     pinControlsAction_ = viewMenu->addAction(QStringLiteral("Pin writing controls"));
+    pinControlsAction_->setObjectName(QStringLiteral("view-pin-controls"));
     pinControlsAction_->setCheckable(true);
     connect(pinControlsAction_, &QAction::triggered, this, [this](bool checked) {
         savePresentationPreference(QStringLiteral("chromePinned"), checked);
     });
     typewriterAction_ = viewMenu->addAction(QStringLiteral("Typewriter scrolling"));
+    typewriterAction_->setObjectName(QStringLiteral("view-typewriter"));
     typewriterAction_->setCheckable(true);
     connect(typewriterAction_, &QAction::triggered, this, [this](bool checked) {
         savePresentationPreference(QStringLiteral("typewriter"), checked);
@@ -1350,7 +1355,9 @@ LibraryWindow::LibraryWindow(QWidget *parent)
                                   QStringLiteral("Baskerville"), QStringLiteral("DejaVu Serif"),
                                   QStringLiteral("Liberation Serif"), QStringLiteral("Noto Serif")}) {
         if (FontPreferences::installedFamily({family}).isEmpty()) continue;
-        connect(fontMenu->addAction(family), &QAction::triggered, this, [this, family] {
+        QAction *fontAction = fontMenu->addAction(family);
+        fontAction->setObjectName(QStringLiteral("view-body-font-%1").arg(family));
+        connect(fontAction, &QAction::triggered, this, [this, family] {
             savePresentationPreference(QStringLiteral("bodyFont"), family);
         });
     }
@@ -1361,7 +1368,9 @@ LibraryWindow::LibraryWindow(QWidget *parent)
                                  QStringLiteral("scifi")};
     for (int index = 0; index < dropCapNames.size(); ++index) {
         const QString id = dropCapIds.at(index);
-        connect(dropCapMenu->addAction(dropCapNames.at(index)), &QAction::triggered,
+        QAction *dropCapAction = dropCapMenu->addAction(dropCapNames.at(index));
+        dropCapAction->setObjectName(QStringLiteral("view-dropcap-%1").arg(id));
+        connect(dropCapAction, &QAction::triggered,
                 this, [this, id] { savePresentationPreference(QStringLiteral("dropCapStyle"), id); });
     }
     viewMenu->addSeparator();
@@ -1370,28 +1379,38 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             qBound(0.75, activePreferences_.pageZoom + change, 1.6));
     };
     QAction *zoomIn = viewMenu->addAction(QStringLiteral("Zoom in"));
+    zoomIn->setObjectName(QStringLiteral("view-zoom-in"));
     zoomIn->setShortcut(QKeySequence::ZoomIn);
     connect(zoomIn, &QAction::triggered, this, [zoomBy] { zoomBy(0.1); });
     QAction *zoomOut = viewMenu->addAction(QStringLiteral("Zoom out"));
+    zoomOut->setObjectName(QStringLiteral("view-zoom-out"));
     zoomOut->setShortcut(QKeySequence::ZoomOut);
     connect(zoomOut, &QAction::triggered, this, [zoomBy] { zoomBy(-0.1); });
     QAction *resetZoom = viewMenu->addAction(QStringLiteral("Reset zoom"));
+    resetZoom->setObjectName(QStringLiteral("view-zoom-reset"));
     resetZoom->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(resetZoom, &QAction::triggered,
             this, [this] { savePresentationPreference(QStringLiteral("pageZoom"), 1.0); });
     QMenu *sizeMenu = viewMenu->addMenu(QStringLiteral("Writing text size"));
-    connect(sizeMenu->addAction(QStringLiteral("Larger")), &QAction::triggered, this, [this] {
+    QAction *largerText = sizeMenu->addAction(QStringLiteral("Larger"));
+    largerText->setObjectName(QStringLiteral("view-text-larger"));
+    connect(largerText, &QAction::triggered, this, [this] {
         savePresentationPreference(QStringLiteral("editorFontSize"),
                                    qMin(22, activePreferences_.editorFontSize + 1));
     });
-    connect(sizeMenu->addAction(QStringLiteral("Smaller")), &QAction::triggered, this, [this] {
+    QAction *smallerText = sizeMenu->addAction(QStringLiteral("Smaller"));
+    smallerText->setObjectName(QStringLiteral("view-text-smaller"));
+    connect(smallerText, &QAction::triggered, this, [this] {
         savePresentationPreference(QStringLiteral("editorFontSize"),
                                    qMax(14, activePreferences_.editorFontSize - 1));
     });
-    connect(sizeMenu->addAction(QStringLiteral("Reset size")), &QAction::triggered, this, [this] {
+    QAction *resetText = sizeMenu->addAction(QStringLiteral("Reset size"));
+    resetText->setObjectName(QStringLiteral("view-text-reset"));
+    connect(resetText, &QAction::triggered, this, [this] {
         savePresentationPreference(QStringLiteral("editorFontSize"), 17);
     });
     QAction *fullscreen = viewMenu->addAction(QStringLiteral("Toggle fullscreen"));
+    fullscreen->setObjectName(QStringLiteral("view-fullscreen"));
     fullscreen->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
     connect(fullscreen, &QAction::triggered, this, [this] {
         isFullScreen() ? showNormal() : showFullScreen();
@@ -3285,23 +3304,23 @@ void LibraryWindow::applyPreferences(const LibraryPreferences &preferences)
         notices.append(QStringLiteral("Unknown writing mode; using Pantser."));
     }
 
-    const QString systemSerif = FontPreferences::systemSerifFamily();
+    const QString fallbackFont = FontPreferences::bodyFallbackFamily();
     QString bodyFont = activePreferences_.bodyFont.trimmed();
     if (activePreferences_.bodyFontInvalid) {
         notices.append(QStringLiteral("Saved typeface choice is invalid; using '%1'.")
-                           .arg(systemSerif));
-        bodyFont = systemSerif;
+                           .arg(fallbackFont));
+        bodyFont = fallbackFont;
     } else if (!bodyFont.isEmpty()) {
         const QString installed = FontPreferences::installedFamily({bodyFont});
         if (installed.isEmpty()) {
             notices.append(QStringLiteral("Saved typeface '%1' is unavailable; using '%2'.")
-                               .arg(bodyFont, systemSerif));
-            bodyFont = systemSerif;
+                               .arg(bodyFont, fallbackFont));
+            bodyFont = fallbackFont;
         } else {
             bodyFont = installed;
         }
     } else {
-        bodyFont = systemSerif;
+        bodyFont = fallbackFont;
     }
     activePreferences_.bodyFont = bodyFont;
     QFont editorFont = chapterEditor_->font();

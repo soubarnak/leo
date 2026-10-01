@@ -1,4 +1,5 @@
 #include "library_window.h"
+#include "font_preferences.h"
 
 #include <QApplication>
 #include <QAction>
@@ -899,6 +900,98 @@ private slots:
         QVERIFY(state->text().contains(QStringLiteral("safe defaults")));
     }
 
+    void writingViewPreferencesPersistAcrossReopen()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
+        QVERIFY(library.isValid());
+        const QString bodyFamily = FontPreferences::installedFamily(
+            {QStringLiteral("DejaVu Serif"), QStringLiteral("Liberation Serif")});
+        const auto viewAction = [](LibraryWindow *window, const QString &name) {
+            return window->findChild<QAction *>(name);
+        };
+        const auto trigger = [&viewAction](LibraryWindow *window, const QString &name) {
+            QAction *action = viewAction(window, name);
+            if (!action) qFatal("Missing View action %s", qPrintable(name));
+            action->trigger();
+        };
+        const auto libraryJson = [&library] {
+            return jsonFile(library.path(), QStringLiteral("library.json")).toObject();
+        };
+
+        {
+            LibraryWindow window;
+            QVERIFY(window.openLibrary(library.path()));
+            openSingleChapter(&window);
+            trigger(&window, QStringLiteral("view-theme-paper"));
+            trigger(&window, QStringLiteral("view-brighter-controls"));
+            trigger(&window, QStringLiteral("view-pin-controls"));
+            trigger(&window, QStringLiteral("view-typewriter"));
+            trigger(&window, QStringLiteral("view-zoom-in"));
+            trigger(&window, QStringLiteral("view-zoom-in"));
+            trigger(&window, QStringLiteral("view-text-larger"));
+            if (!bodyFamily.isEmpty()) {
+                trigger(&window, QStringLiteral("view-body-font-%1").arg(bodyFamily));
+            }
+            trigger(&window, QStringLiteral("view-dropcap-fantasy"));
+
+            const QJsonObject saved = libraryJson();
+            QCOMPARE(saved.value(QStringLiteral("pageTheme")).toString(), QStringLiteral("paper"));
+            QVERIFY(saved.value(QStringLiteral("uiBright")).toBool());
+            QVERIFY(saved.value(QStringLiteral("chromePinned")).toBool());
+            QVERIFY(saved.value(QStringLiteral("typewriter")).toBool());
+            QVERIFY(qAbs(saved.value(QStringLiteral("pageZoom")).toDouble() - 1.2) < 1e-9);
+            QCOMPARE(saved.value(QStringLiteral("editorFontSize")).toInt(), 18);
+            const QJsonObject fonts = saved.value(QStringLiteral("fonts")).toObject();
+            if (!bodyFamily.isEmpty()) {
+                QCOMPARE(fonts.value(QStringLiteral("body")).toString(), bodyFamily);
+            }
+            QCOMPARE(fonts.value(QStringLiteral("dropcap")).toString(), QStringLiteral("fantasy"));
+            window.close();
+            QApplication::processEvents();
+        }
+
+        {
+            LibraryWindow reopened;
+            QVERIFY(reopened.openLibrary(library.path()));
+            openSingleChapter(&reopened);
+            QVERIFY(viewAction(&reopened, QStringLiteral("view-theme-paper"))->isChecked());
+            QVERIFY(!viewAction(&reopened, QStringLiteral("view-theme-night"))->isChecked());
+            QVERIFY(viewAction(&reopened, QStringLiteral("view-brighter-controls"))->isChecked());
+            QVERIFY(viewAction(&reopened, QStringLiteral("view-pin-controls"))->isChecked());
+            QVERIFY(viewAction(&reopened, QStringLiteral("view-typewriter"))->isChecked());
+            auto *editor = reopened.findChild<QPlainTextEdit *>("chapter-editor");
+            QVERIFY(editor);
+            if (!bodyFamily.isEmpty()) {
+                QCOMPARE(editor->font().family(), bodyFamily);
+            }
+            QVERIFY(qAbs(editor->font().pointSizeF() - 18 * 1.2) < 0.05);
+
+            trigger(&reopened, QStringLiteral("view-theme-night"));
+            trigger(&reopened, QStringLiteral("view-brighter-controls"));
+            trigger(&reopened, QStringLiteral("view-pin-controls"));
+            trigger(&reopened, QStringLiteral("view-typewriter"));
+            trigger(&reopened, QStringLiteral("view-zoom-reset"));
+            trigger(&reopened, QStringLiteral("view-text-reset"));
+            const QJsonObject reverted = libraryJson();
+            QCOMPARE(reverted.value(QStringLiteral("pageTheme")).toString(), QStringLiteral("night"));
+            QVERIFY(!reverted.value(QStringLiteral("uiBright")).toBool());
+            QVERIFY(!reverted.value(QStringLiteral("chromePinned")).toBool());
+            QVERIFY(!reverted.value(QStringLiteral("typewriter")).toBool());
+            QVERIFY(qAbs(reverted.value(QStringLiteral("pageZoom")).toDouble() - 1.0) < 1e-9);
+            QCOMPARE(reverted.value(QStringLiteral("editorFontSize")).toInt(), 17);
+            reopened.close();
+            QApplication::processEvents();
+        }
+
+        LibraryWindow again;
+        QVERIFY(again.openLibrary(library.path()));
+        openSingleChapter(&again);
+        QVERIFY(again.findChild<QAction *>(QStringLiteral("view-theme-night"))->isChecked());
+        QVERIFY(!again.findChild<QAction *>(QStringLiteral("view-brighter-controls"))->isChecked());
+        QVERIFY(!again.findChild<QAction *>(QStringLiteral("view-pin-controls"))->isChecked());
+        QVERIFY(!again.findChild<QAction *>(QStringLiteral("view-typewriter"))->isChecked());
+    }
+
     void unavailableSavedPreferencesUseFallbackWithoutLibraryWrites()
     {
         QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
@@ -924,6 +1017,12 @@ private slots:
         QVERIFY(state);
         QVERIFY(!editor->isReadOnly());
         QVERIFY(editor->font().family() != QStringLiteral("Font That Does Not Exist"));
+        const QString serifFallback = FontPreferences::installedFamily(
+            {QStringLiteral("Georgia"), QStringLiteral("Liberation Serif"),
+             QStringLiteral("DejaVu Serif"), QStringLiteral("Noto Serif")});
+        if (!serifFallback.isEmpty()) {
+            QCOMPARE(editor->font().family(), serifFallback);
+        }
         QVERIFY(state->text().contains(QStringLiteral("unavailable")));
         QVERIFY(state->text().contains(QStringLiteral("Unknown writing mode")));
         QVERIFY(state->text().contains(QStringLiteral("Unknown drop-cap choice")));

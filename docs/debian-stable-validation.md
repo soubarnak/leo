@@ -25,7 +25,13 @@ Driven by xdotool key events only, with no mouse:
 
 - AT-SPI (`pyatspi`) lists the Library tree as "Library shelves, books, and chapters"; the chapter editor as "Chapter text or read-only source" and focused after a keyboard open; and named buttons such as "Return to Library", "Previous", "Next", "Save" and "Goals sprints…". Only internal list and cell wrappers are unnamed.
 - With `QT_SCALE_FACTOR=2` the editor, headings and menu bar stay legible. The window opens at 1920×1400 and is not clamped to the 1280×800 screen.
-- With the body typeface Georgia missing, the editor falls back and shows a notice. The fallback body text rendered in a sans face beside a serif drop cap, which a maintainer should judge.
+- With the body typeface Georgia missing, the editor falls back and shows a notice. The first run rendered the fallback in a sans face beside a serif drop cap, because Qt's serif style hint does not reach fontconfig. The fallback now picks the first installed of Georgia, Liberation Serif, DejaVu Serif and Noto Serif, and only then the style hint (`unavailableSavedPreferencesUseFallbackWithoutLibraryWrites`).
+
+## Writing-view persistence
+
+`writingViewPreferencesPersistAcrossReopen` drives the View menu actions, then reopens the Library in a fresh window. Paper/night theme, brighter controls, pinned writing controls, typewriter scrolling, zoom, writing text size, body typeface and drop-cap style are written to `library.json` under NEO's keys and restored on reopen; turning them back off persists too.
+
+Fullscreen and help are session state and are not persisted, matching NEO, which also toggles fullscreen without saving it. Hover panels are not saved either; only the "Pin writing controls" choice is (`chromePinned`, a LEO-only key).
 
 ## Not covered
 
