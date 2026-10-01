@@ -46,8 +46,41 @@ appended paragraph. It does not reproduce what NEO's renderer would save, and
 no real synchronization is involved. Conflict handling is covered separately by
 `externalEditPreservesDraftAndOffersExplicitRecoveredSwitch`.
 
+### Syncthing and Pocket bridge evidence (opt-in)
+
+`tests/handoff/syncthing_handoff.sh` runs two real Syncthing instances
+(official `docker.io/syncthing/syncthing` image) in rootless podman containers
+on a private network: A plays the desktop, B plays the phone. Discovery, relays
+and NAT are off and the devices use static addresses. A synthetic Library
+(two chapters, stickies, darlings, a protected sticky marker, unknown JSON keys
+and an unknown `.bin` file) is seeded in A and the test then:
+
+1. waits for Syncthing to deliver it to B and checks Pocket reads the same data
+   as NEO;
+2. makes a desktop edit with NEO's real `main.js` handlers, waits for sync;
+3. makes a phone edit by running Pocket's real, unmodified
+   `pocket/www/pocket-bridge.js` headlessly over the synced files
+   (`tests/handoff/pocket_bridge_harness.cjs`), waits for sync back;
+4. makes a second desktop edit, waits for sync, and confirms both devices read
+   all three edits in order with identical chapter order, titles, stickies,
+   darlings, protected marker, unknown keys, and a byte-identical (sha256)
+   unknown file.
+
+It is opt-in so default `ctest` stays fast and offline. Run it directly with
+`bash tests/handoff/syncthing_handoff.sh`, or configure with
+`-DLEO_RUN_SYNCTHING_TESTS=ON` and run `ctest -L syncthing`. It exits 77
+(skipped) if podman, node, or the image is unavailable. Set
+`LEO_SYNCTHING_IMAGE` to use a different image.
+
+This proves real Syncthing synchronization and Pocket's bridge code against
+synced files. It does **not** run the Android app, its WebView, Capacitor's
+native filesystem plugin (a node `fs` mock stands in), Android permissions, or
+a real phone, and it does not drive LEO's Qt window (LEO's side is covered by
+the round-trip test above). It is not final proof of the Pocket handoff.
+
 ## Manual release gate
 
-The actual handoff through NEO Pocket and Syncthing is not automated. It stays
+The handoff through the real NEO Pocket Android app on a phone is not automated;
+the opt-in podman test above covers only Syncthing and the bridge code. It stays
 a manual check that must pass before release, following the steps in the
 "Device handoff check" section of [`pocket/README.md`](../pocket/README.md).

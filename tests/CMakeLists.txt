@@ -87,3 +87,15 @@ foreach(leo_test IN LISTS leo_all_tests)
     "XDG_DATA_HOME=${leo_xdg}/data" "XDG_STATE_HOME=${leo_xdg}/state"
     "XDG_CONFIG_HOME=${leo_xdg}/config" "XDG_CACHE_HOME=${leo_xdg}/cache")
 endforeach()
+
+# Opt-in: real Syncthing in two rootless podman containers plus Pocket's real
+# bridge code (headless). Needs podman, node and the syncthing image; skips (77)
+# when they are unavailable. Enable with -DLEO_RUN_SYNCTHING_TESTS=ON, run with
+# `ctest -L syncthing`.
+option(LEO_RUN_SYNCTHING_TESTS "Register the podman Syncthing device handoff test" OFF)
+if(LEO_RUN_SYNCTHING_TESTS)
+  add_test(NAME leo-syncthing-handoff
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/handoff/syncthing_handoff.sh ${CMAKE_SOURCE_DIR})
+  set_tests_properties(leo-syncthing-handoff PROPERTIES
+    LABELS syncthing SKIP_RETURN_CODE 77 TIMEOUT 600)
+endif()
