@@ -33,6 +33,15 @@ Driven by xdotool key events only, with no mouse:
 
 Fullscreen and help are session state and are not persisted, matching NEO, which also toggles fullscreen without saving it. Hover panels are not saved either; only the "Pin writing controls" choice is (`chromePinned`, a LEO-only key).
 
+## Scripted Orca pass (XFCE/X11, podman)
+
+Orca 48.1, AT-SPI 2.56.2, Qt 6.8.2, xfwm4 4.20 on Xvfb 1280×800, `leo-writer` 0.2.0 built from 59ad74e. Keys sent with xdotool; speech read from Orca's debug log. This is a scripted run, not a person listening. Georgia and Liberation Serif were absent.
+
+- Passes: the Library tree is announced as "Library shelves, books, and chapters tree"; Return on a chapter focuses and announces "Chapter text or read-only source text"; typing echoes; buttons are announced by name; View menu items announce checked state; F1 reads the writing shortcuts; Escape from help or Find returns focus to the editor.
+- Font substitution: the status bar read "Saved typeface 'Georgia' is unavailable; using 'DejaVu Serif'." and the body rendered in a serif beside the serif drop cap. Orca never speaks that notice, because the chapter-open message replaces it.
+- Scaling: at 2× the window grew to 1624×776 and the page clipped; the Library tree elided book and chapter names to "F…" and "…". 1.5× fits but the Library column is still narrow.
+- Defects found, not yet fixed: leaf chapters announced as "expanded"; generic editor name without the chapter title; silent Tab stops on unnamed spacers; submenus (Page theme, Body typeface, Drop-cap style) not announced as submenus; "Zoom in" followed by a garbled shortcut; Find results tree has no accessible name; onboarding path field spoken only as "text"; window not clamped to the screen at 2×.
+
 ## Not covered
 
-No human screen-reader (Orca) session, writing-feel judgement, real XFCE panel session, or Wayland run. Those remain maintainer sign-offs.
+No human listening session (only the scripted Orca run above), writing-feel judgement, real XFCE panel session, or Wayland run. Those remain maintainer sign-offs.
