@@ -1,6 +1,9 @@
 add_executable(leo-library-browser-test library_browser_test.cpp)
 target_link_libraries(leo-library-browser-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-library-browser COMMAND leo-library-browser-test)
+target_compile_definitions(leo-library-browser-test PRIVATE
+  NEO_HANDOFF_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/neo_handoff_roundtrip.cjs"
+  NEO_HANDOFF_MAIN="${CMAKE_SOURCE_DIR}/main.js")
 set_tests_properties(leo-library-browser PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(leo-library-persistence-test library_persistence_test.cpp)

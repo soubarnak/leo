@@ -10,6 +10,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -20,7 +21,9 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QTreeWidget>
@@ -343,6 +346,35 @@ HandoffDialogResult prepareDeviceHandoff(
     });
     action->trigger();
     return result;
+}
+
+
+// Runs the headless NEO harness (NEO's own IPC handlers) against a Library.
+// An empty editText only reads; otherwise it appends one plain paragraph.
+QJsonObject runNeoHandoffHarness(const QString &node, const QString &library,
+                                 const QString &editText = QString())
+{
+    QProcess neo;
+    QStringList arguments{QStringLiteral(NEO_HANDOFF_SCRIPT), QStringLiteral(NEO_HANDOFF_MAIN),
+                          library, QStringLiteral("book-1"),
+                          editText.isEmpty() ? QStringLiteral("read") : QStringLiteral("edit")};
+    if (!editText.isEmpty()) {
+        arguments << editText;
+    }
+    neo.start(node, arguments);
+    if (!neo.waitForFinished(20000) || neo.exitStatus() != QProcess::NormalExit ||
+        neo.exitCode() != 0) {
+        qWarning("NEO harness failed: %s", neo.readAllStandardError().constData());
+        return {};
+    }
+    return QJsonDocument::fromJson(neo.readAllStandardOutput()).object();
+}
+
+QJsonValue jsonFile(const QString &library, const QString &relative)
+{
+    const QJsonDocument document = QJsonDocument::fromJson(
+        readFile(QDir(library).filePath(relative)));
+    return document.isArray() ? QJsonValue(document.array()) : QJsonValue(document.object());
 }
 
 }
@@ -1987,6 +2019,147 @@ private slots:
         QAction *redo = window.findChild<QAction *>("chapter-structure-redo");
         QVERIFY(redo);
         QVERIFY(redo->isEnabled());
+    }
+
+    void leoNeoLeoRoundTripKeepsLatestEditsSemanticGraphAndUnknownData()
+    {
+        const QString node = QStandardPaths::findExecutable(QStringLiteral("node"));
+        if (node.isEmpty()) {
+            QSKIP("node is not available to run NEO's headless handlers");
+        }
+        QTemporaryDir privateData;
+        QTemporaryDir privateState;
+        QVERIFY(privateData.isValid());
+        QVERIFY(privateState.isValid());
+        ScopedEnvironmentVariable dataHome("XDG_DATA_HOME", privateData.path().toLocal8Bit());
+        ScopedEnvironmentVariable stateHome("XDG_STATE_HOME", privateState.path().toLocal8Bit());
+
+        const QByteArray protectedMarker(
+            "<p>Question <span class=\"ph-mark\" data-sid=\"s-existing\" "
+            "contenteditable=\"false\">⚑</span></p>");
+        const QByteArray futureMarkup(
+            "<div data-future=\"keep&amp;exact\"><span>future</span></div>");
+        const QByteArray stickies(R"json([
+  { "id": "s-existing", "chapterId": "chapter-a", "text": "keep this link",
+    "resolved": false, "futureStickyField": { "keep": true } }
+])json");
+        const QByteArray darlings(R"json([
+  { "id": "d-existing", "html": "<p>Saved line</p>", "text": "Saved line",
+    "chapterId": "chapter-a", "chapterLabel": "Chapter 1", "anchorPrefix": "before",
+    "anchorSuffix": "after", "date": "2026-09-20T00:00:00.000Z",
+    "futureDarlingField": { "keep": true } }
+])json");
+        QTemporaryDir library = makeNeoLibrary(
+            QByteArrayLiteral("<p>Before prose.</p>") + protectedMarker + futureMarkup +
+                QByteArrayLiteral("<p>After prose.</p>"),
+            stickies, darlings);
+        QVERIFY(library.isValid());
+        const QString root = library.path();
+        // A second chapter makes chapter order observable across the round trip.
+        writeFile(QDir(root).filePath(QStringLiteral("book-1/chapters/chapter-b.html")),
+                  QByteArrayLiteral("<p>Second chapter.</p>\n"));
+        QJsonObject book = jsonFile(root, QStringLiteral("book-1/book.json")).toObject();
+        book.insert(QStringLiteral("chapterOrder"),
+                    QJsonArray{QStringLiteral("chapter-a"), QStringLiteral("chapter-b")});
+        book.insert(QStringLiteral("chapterTitles"),
+                    QJsonObject{{QStringLiteral("chapter-a"), QStringLiteral("Arrival")},
+                                {QStringLiteral("chapter-b"), QStringLiteral("Departure")}});
+        writeFile(QDir(root).filePath(QStringLiteral("book-1/book.json")),
+                  QJsonDocument(book).toJson());
+        const QJsonValue originalStickies = jsonFile(root, QStringLiteral("book-1/stickies.json"));
+        const QJsonValue originalDarlings = jsonFile(root, QStringLiteral("book-1/darlings.json"));
+        const QJsonValue originalLibraryJson = jsonFile(root, QStringLiteral("library.json"));
+        const QByteArray unknownFile = readFile(QDir(root).filePath(
+            QStringLiteral("book-1/unknown-supporting-data.bin")));
+        const QByteArray secondChapter = readFile(QDir(root).filePath(
+            QStringLiteral("book-1/chapters/chapter-b.html")));
+        const QString chapterPath = QDir(root).filePath(
+            QStringLiteral("book-1/chapters/chapter-a.html"));
+
+        auto leoEditAndHandoff = [&](const QString &from, const QString &to) {
+            LibraryWindow window;
+            QVERIFY(window.openLibrary(root));
+            openSingleChapter(&window);
+            auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+            QVERIFY(editor);
+            QVERIFY(!editor->isReadOnly());
+            QString text = editor->toPlainText();
+            QVERIFY2(text.contains(from), qPrintable(text));
+            text.replace(from, to);
+            editor->setPlainText(text);
+            const HandoffDialogResult result = prepareDeviceHandoff(
+                &window, [&](QMessageBox *dialog) {
+                    return buttonWithText(dialog, QStringLiteral("Close LEO"));
+                });
+            QVERIFY(result.shown);
+            QVERIFY(result.answered);
+            QVERIFY(!window.isVisible());
+        };
+        // Everything that must survive each hop unchanged in meaning.
+        auto verifyGraphAndUnknowns = [&](const QJsonObject &neoView) {
+            QCOMPARE(jsonFile(root, QStringLiteral("book-1/stickies.json")), originalStickies);
+            QCOMPARE(jsonFile(root, QStringLiteral("book-1/darlings.json")), originalDarlings);
+            QCOMPARE(jsonFile(root, QStringLiteral("library.json")), originalLibraryJson);
+            const QJsonObject savedBook = jsonFile(root, QStringLiteral("book-1/book.json")).toObject();
+            QCOMPARE(savedBook.value(QStringLiteral("chapterOrder")).toArray(),
+                     (QJsonArray{QStringLiteral("chapter-a"), QStringLiteral("chapter-b")}));
+            QCOMPARE(savedBook.value(QStringLiteral("futureBookField")),
+                     QJsonValue(QJsonObject{{QStringLiteral("keep"),
+                                             QJsonArray{1, QStringLiteral("future")}}}));
+            const QByteArray chapter = readFile(chapterPath);
+            QVERIFY(chapter.contains(protectedMarker));
+            QVERIFY(chapter.contains(futureMarkup));
+            QCOMPARE(readFile(QDir(root).filePath(
+                         QStringLiteral("book-1/unknown-supporting-data.bin"))), unknownFile);
+            QCOMPARE(readFile(QDir(root).filePath(
+                         QStringLiteral("book-1/chapters/chapter-b.html"))), secondChapter);
+            if (!neoView.isEmpty()) {
+                QCOMPARE(neoView.value(QStringLiteral("stickies")).toArray(),
+                         originalStickies.toArray());
+                QCOMPARE(neoView.value(QStringLiteral("darlings")).toArray(),
+                         originalDarlings.toArray());
+                QCOMPARE(neoView.value(QStringLiteral("book")).toObject()
+                             .value(QStringLiteral("chapterOrder")).toArray(),
+                         (QJsonArray{QStringLiteral("chapter-a"), QStringLiteral("chapter-b")}));
+                QCOMPARE(neoView.value(QStringLiteral("library")).toObject()
+                             .value(QStringLiteral("futureLibraryField")),
+                         QJsonValue(QJsonObject{{QStringLiteral("keep"), true}}));
+            }
+        };
+
+        // LEO -> NEO: NEO sees LEO's edit, makes a simple edit of its own.
+        leoEditAndHandoff(QStringLiteral("Before prose."), QStringLiteral("LEO first prose."));
+        const QJsonObject neoRead = runNeoHandoffHarness(node, root);
+        QVERIFY(!neoRead.isEmpty());
+        QVERIFY(neoRead.value(QStringLiteral("chapters")).toObject()
+                    .value(QStringLiteral("chapter-a")).toString()
+                    .contains(QStringLiteral("LEO first prose.")));
+        verifyGraphAndUnknowns(neoRead);
+        const QJsonObject neoEdited = runNeoHandoffHarness(node, root, QStringLiteral("NEO appended prose."));
+        QVERIFY(!neoEdited.isEmpty());
+        verifyGraphAndUnknowns(neoEdited);
+
+        // NEO -> LEO: LEO reopens with NEO's latest edit and the same graph.
+        {
+            LibraryWindow reopened;
+            QVERIFY(reopened.openLibrary(root));
+            openSingleChapter(&reopened);
+            auto *editor = reopened.findChild<QPlainTextEdit *>("chapter-editor");
+            QVERIFY(editor);
+            QVERIFY(editor->toPlainText().contains(QStringLiteral("LEO first prose.")));
+            QVERIFY(editor->toPlainText().contains(QStringLiteral("NEO appended prose.")));
+        }
+
+        // LEO -> NEO again: NEO sees LEO's latest edit, NEO's edit and the unknowns.
+        leoEditAndHandoff(QStringLiteral("LEO first prose."), QStringLiteral("LEO second prose."));
+        const QJsonObject finalNeoRead = runNeoHandoffHarness(node, root);
+        QVERIFY(!finalNeoRead.isEmpty());
+        const QString finalChapter = finalNeoRead.value(QStringLiteral("chapters")).toObject()
+                                         .value(QStringLiteral("chapter-a")).toString();
+        QVERIFY(finalChapter.contains(QStringLiteral("LEO second prose.")));
+        QVERIFY(!finalChapter.contains(QStringLiteral("LEO first prose.")));
+        QVERIFY(finalChapter.contains(QStringLiteral("NEO appended prose.")));
+        verifyGraphAndUnknowns(finalNeoRead);
     }
 };
 

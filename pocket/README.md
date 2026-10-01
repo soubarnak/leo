@@ -41,6 +41,8 @@ choosing **Close LEO** before waiting for synchronization.
 
 Edit a Library on one device at a time. Do not open it for editing on another
 device until the prior device has closed and Syncthing reports **Up to Date**.
+See [`docs/device-handoff.md`](../docs/device-handoff.md) for the handoff rules
+and the automated LEO/NEO evidence; this Pocket check remains manual.
 
 Local builds need Android Studio and: `cd pocket && npm install`, copy
 `../app.js`, `../covers.js` and `../styles.css` into `www/`, `npx cap sync android`, then
