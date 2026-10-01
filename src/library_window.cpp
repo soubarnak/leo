@@ -45,6 +45,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QKeySequence>
+#include <QScopeGuard>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -2462,6 +2463,11 @@ bool LibraryWindow::openOutline(QTreeWidgetItem *item)
 
 void LibraryWindow::refreshBookPages()
 {
+    // Reparenting the editor drops keyboard focus; give it back so a chapter opened from the keyboard accepts typing.
+    const bool editorHadFocus = chapterEditor_->hasFocus();
+    const auto restoreFocus = qScopeGuard([this, editorHadFocus] {
+        if (editorHadFocus && !chapterReadOnly_) chapterEditor_->setFocus();
+    });
     bookPagesLayout_->removeWidget(chapterEditor_);
     chapterEditor_->setParent(bookPages_);
     while (QLayoutItem *entry = bookPagesLayout_->takeAt(0)) {
@@ -2569,6 +2575,17 @@ void LibraryWindow::resizeChapterEditorToContents()
     const int height = qBound(480, qCeil(chapterEditor_->document()->size().height()) + 32,
                               16000000);
     chapterEditor_->setFixedHeight(height);
+}
+
+void LibraryWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+    // A modal dialog closing can leave the reactivated window with nothing focused; keep keyboard writing alive.
+    if (event->type() == QEvent::ActivationChange && isActiveWindow() && chapterEditor_ && pages_ &&
+        pages_->currentWidget() == editorPage_ && !chapterReadOnly_ && !QApplication::activeModalWidget() &&
+        !QApplication::focusWidget()) {
+        chapterEditor_->setFocus();
+    }
 }
 
 bool LibraryWindow::eventFilter(QObject *watched, QEvent *event)
@@ -3241,6 +3258,14 @@ bool LibraryWindow::openDocument(const QString &relativePath,
     }
     if (!chapterReadOnly_) {
         chapterEditor_->setFocus();
+        // The stacked page shows and re-polishes after this call; claim focus again once that settles so
+        // typing after a keyboard open lands in the chapter rather than the first button on the page.
+        QPointer<QPlainTextEdit> editor(chapterEditor_);
+        QTimer::singleShot(0, this, [this, editor] {
+            if (editor && !chapterReadOnly_ && pages_->currentWidget() == editorPage_) {
+                editor->setFocus();
+            }
+        });
     }
     return true;
 }

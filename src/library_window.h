@@ -49,6 +49,7 @@ public:
 
 private:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void changeEvent(QEvent *event) override;
     void beginNewLibrary();
     void createNewLibrary();
     void chooseLibrary();

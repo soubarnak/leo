@@ -351,6 +351,45 @@ class LibraryBrowserTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void keyboardOpenedChapterReceivesTypingFocus()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>First words.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        window.show();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        auto *tree = window.findChild<QTreeWidget *>("library-tree");
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(tree);
+        QVERIFY(editor);
+        tree->expandAll();
+        tree->setCurrentItem(singleChapterItem(tree));
+        tree->setFocus();
+        QTest::keyClick(tree, Qt::Key_Return);
+        QTest::qWait(100);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(editor));
+    }
+
+    void editorRegainsFocusWhenWindowReactivatesAfterDialog()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>First words.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        editor->clearFocus();
+        QVERIFY(QApplication::focusWidget() != editor);
+        QEvent activation(QEvent::ActivationChange);
+        QApplication::sendEvent(&window, &activation);
+        QTest::qWait(50);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(editor));
+    }
+
     void richFormattingSurvivesSaveAndReopen()
     {
         QTemporaryDir library = makeSingleChapterLibrary(
