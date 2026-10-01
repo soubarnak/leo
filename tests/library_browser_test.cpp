@@ -24,6 +24,9 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QScreen>
+#include <QStatusBar>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -2259,6 +2262,162 @@ private slots:
         QVERIFY(!finalChapter.contains(QStringLiteral("LEO first prose.")));
         QVERIFY(finalChapter.contains(QStringLiteral("NEO appended prose.")));
         verifyGraphAndUnknowns(finalNeoRead);
+    }
+
+    void windowStaysWithinAvailableScreenWhenChapterOpens()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        const QRect available = window.screen()->availableGeometry();
+        QVERIFY2(window.width() <= available.width(), qPrintable(QString::number(window.width())));
+        QVERIFY2(window.height() <= available.height(), qPrintable(QString::number(window.height())));
+        QVERIFY2(window.minimumSizeHint().width() <= available.width(),
+                 qPrintable(QString::number(window.minimumSizeHint().width())));
+    }
+
+    void libraryTreeKeepsNamesReadableAtLargeFontSizes()
+    {
+        QTemporaryDir library = makeLibrary();
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        window.show();
+        QApplication::processEvents();
+        auto *tree = window.findChild<QTreeWidget *>("library-tree");
+        QVERIFY(tree);
+        tree->expandAll();
+        QApplication::processEvents();
+        QVERIFY2(tree->columnWidth(0) >= tree->fontMetrics().averageCharWidth() * 24,
+                 qPrintable(QString::number(tree->columnWidth(0))));
+    }
+
+    void screenReaderNamesCoverEditorFindResultsAndOnboarding()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *title = window.findChild<QLabel *>("chapter-title");
+        QVERIFY(editor);
+        QVERIFY(title);
+        QVERIFY(!title->text().isEmpty());
+        QVERIFY2(editor->accessibleName().contains(title->text()),
+                 qPrintable(editor->accessibleName()));
+        QVERIFY(editor->accessibleName().startsWith(QStringLiteral("Chapter text")));
+
+        const QMap<QString, QString> onboarding{
+            {QStringLiteral("onboarding-author"), QStringLiteral("Author name")},
+            {QStringLiteral("onboarding-mode"), QStringLiteral("Writing mode")},
+            {QStringLiteral("onboarding-body-font"), QStringLiteral("Body typeface")},
+            {QStringLiteral("onboarding-drop-cap"), QStringLiteral("Drop-cap style")},
+            {QStringLiteral("onboarding-location"), QStringLiteral("New Library location")}};
+        for (auto it = onboarding.cbegin(); it != onboarding.cend(); ++it) {
+            auto *field = window.findChild<QWidget *>(it.key());
+            QVERIFY2(field, qPrintable(it.key()));
+            QCOMPARE(field->accessibleName(), it.value());
+        }
+
+        QString findResultsName;
+        QTimer::singleShot(0, [&findResultsName] {
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                if (auto *hits = top->findChild<QTreeWidget *>("book-find-results")) {
+                    findResultsName = hits->accessibleName();
+                    top->close();
+                }
+            }
+        });
+        QAction *find = nullptr;
+        for (QAction *menuAction : window.menuBar()->actions()) {
+            if (!menuAction->menu()) continue;
+            for (QAction *action : menuAction->menu()->actions()) {
+                if (action->text() == QStringLiteral("Find and Replace…")) find = action;
+            }
+        }
+        QVERIFY(find);
+        find->trigger();
+        QCOMPARE(findResultsName, QStringLiteral("Find results"));
+    }
+
+    void preferenceNoticeSurvivesChapterOpenStatusAndDescribesEditor()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
+        QVERIFY(library.isValid());
+        QJsonObject metadata = QJsonDocument::fromJson(
+                                   readFile(QDir(library.path()).filePath(
+                                       QStringLiteral("library.json"))))
+                                   .object();
+        metadata.insert(QStringLiteral("fonts"), QJsonObject{
+            {QStringLiteral("body"), QStringLiteral("Font That Does Not Exist")}});
+        writeFile(QDir(library.path()).filePath(QStringLiteral("library.json")),
+                  QJsonDocument(metadata).toJson(QJsonDocument::Indented));
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        QVERIFY(editor);
+        QVERIFY(editor->accessibleDescription().contains(QStringLiteral("unavailable")));
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("Chapter open")));
+        QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("unavailable")));
+    }
+
+    void chapterPageFillersAndLabelsDoNotTakeFocus()
+    {
+        QTemporaryDir library = makeLibrary();
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        window.show();
+        QApplication::processEvents();
+        auto *tree = window.findChild<QTreeWidget *>("library-tree");
+        QVERIFY(tree);
+        tree->expandAll();
+        QTreeWidgetItem *chapter = tree->topLevelItem(0)->child(0)->child(1)->child(0);
+        QVERIFY(chapter);
+        emit tree->itemActivated(chapter, 0);
+        QApplication::processEvents();
+        auto *pages = window.findChild<QWidget *>("continuous-book-pages");
+        QVERIFY(pages);
+        QCOMPARE(pages->focusPolicy(), Qt::NoFocus);
+        const auto previews = pages->findChildren<QLabel *>(QRegularExpression("^chapter-preview-"));
+        QVERIFY(!previews.isEmpty());
+        for (QLabel *preview : previews) {
+            QCOMPARE(preview->focusPolicy(), Qt::NoFocus);
+        }
+        for (QWidget *widget : pages->findChildren<QWidget *>(QRegularExpression("^chapter-page-(?!heading)"))) {
+            QCOMPARE(widget->focusPolicy(), Qt::NoFocus);
+        }
+    }
+
+    void zoomInShortcutIsSpeakableAndKeepsStandardKey()
+    {
+        LibraryWindow window;
+        auto *zoomIn = window.findChild<QAction *>("view-zoom-in");
+        QVERIFY(zoomIn);
+        QVERIFY(zoomIn->shortcuts().contains(QKeySequence(QKeySequence::ZoomIn)));
+        QVERIFY(!zoomIn->shortcut().toString().endsWith(QLatin1Char('+')));
+    }
+
+    void viewSubmenusAreDescribedAsSubmenus()
+    {
+        LibraryWindow window;
+        QMenu *view = nullptr;
+        for (QAction *action : window.menuBar()->actions()) {
+            if (action->text() == QStringLiteral("&View")) view = action->menu();
+        }
+        QVERIFY(view);
+        int submenus = 0;
+        for (QAction *action : view->actions()) {
+            if (!action->menu()) continue;
+            ++submenus;
+            QVERIFY2(action->menu()->accessibleDescription().contains(QStringLiteral("submenu")),
+                     qPrintable(action->text()));
+        }
+        QCOMPARE(submenus, 4);
     }
 };
 

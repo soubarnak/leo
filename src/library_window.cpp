@@ -48,7 +48,9 @@
 #include <QScopeGuard>
 #include <QLabel>
 #include <QLineEdit>
+#include <QHeaderView>
 #include <QMenu>
+#include <QScreen>
 #include <QMenuBar>
 #include <QMouseEvent>
 #include <QMessageBox>
@@ -883,11 +885,24 @@ private:
     bool attention_ = false;
 };
 
+void LibraryWindow::clampToAvailableScreen()
+{
+    const QScreen *targetScreen = screen();
+    if (!targetScreen) {
+        return;
+    }
+    const QSize available = targetScreen->availableGeometry().size();
+    if (width() > available.width() || height() > available.height()) {
+        resize(qMin(width(), available.width()), qMin(height(), available.height()));
+    }
+}
+
 LibraryWindow::LibraryWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("LEO"));
     resize(960, 700);
+    clampToAvailableScreen();
     defaultPath_ = defaultLibraryPath();
 
     auto *centralPage = new QWidget(this);
@@ -945,6 +960,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     onboardingAuthor_ = new QLineEdit(onboardingPage_);
     onboardingAuthor_->setObjectName(QStringLiteral("onboarding-author"));
     onboardingAuthor_->setPlaceholderText(QStringLiteral("Anonymous"));
+    onboardingAuthor_->setAccessibleName(QStringLiteral("Author name"));
     onboardingForm->addRow(QStringLiteral("Author name"), onboardingAuthor_);
     onboardingMode_ = new QComboBox(onboardingPage_);
     onboardingMode_->setObjectName(QStringLiteral("onboarding-mode"));
@@ -952,6 +968,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
                              QStringLiteral("pantser"));
     onboardingMode_->addItem(QStringLiteral("Plotter — start with an outline"),
                              QStringLiteral("plotter"));
+    onboardingMode_->setAccessibleName(QStringLiteral("Writing mode"));
     onboardingForm->addRow(QStringLiteral("Writing mode"), onboardingMode_);
     onboardingBodyFont_ = new QComboBox(onboardingPage_);
     onboardingBodyFont_->setObjectName(QStringLiteral("onboarding-body-font"));
@@ -975,16 +992,19 @@ LibraryWindow::LibraryWindow(QWidget *parent)
         const QString fallbackFont = FontPreferences::bodyFallbackFamily();
         onboardingBodyFont_->addItem(fallbackFont, fallbackFont);
     }
+    onboardingBodyFont_->setAccessibleName(QStringLiteral("Body typeface"));
     onboardingForm->addRow(QStringLiteral("Body typeface"), onboardingBodyFont_);
     onboardingDropCap_ = new QComboBox(onboardingPage_);
     onboardingDropCap_->setObjectName(QStringLiteral("onboarding-drop-cap"));
     onboardingDropCap_->addItem(QStringLiteral("Literary"), QStringLiteral("literary"));
     onboardingDropCap_->addItem(QStringLiteral("Fantasy"), QStringLiteral("fantasy"));
     onboardingDropCap_->addItem(QStringLiteral("Sci-Fi"), QStringLiteral("scifi"));
+    onboardingDropCap_->setAccessibleName(QStringLiteral("Drop-cap style"));
     onboardingForm->addRow(QStringLiteral("Drop-cap style"), onboardingDropCap_);
 
     onboardingLocation_ = new QLineEdit(defaultPath_, onboardingPage_);
     onboardingLocation_->setObjectName(QStringLiteral("onboarding-location"));
+    onboardingLocation_->setAccessibleName(QStringLiteral("New Library location"));
     auto *locationRow = new QWidget(onboardingPage_);
     auto *locationLayout = new QHBoxLayout(locationRow);
     locationLayout->setContentsMargins(0, 0, 0, 0);
@@ -1031,6 +1051,9 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     tree_->setObjectName(QStringLiteral("library-tree"));
     tree_->setAccessibleName(QStringLiteral("Library shelves, books, and chapters"));
     tree_->setColumnCount(2);
+    tree_->setMinimumWidth(tree_->fontMetrics().averageCharWidth() * 24);
+    tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    tree_->header()->setMinimumSectionSize(tree_->fontMetrics().averageCharWidth() * 24);
     tree_->setHeaderLabels({QStringLiteral("Library"), QStringLiteral("Book author")});
     tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     tree_->setDragEnabled(true);
@@ -1076,6 +1099,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     editorTitle_ = new QLabel(editorChrome_);
     editorTitle_->setObjectName(QStringLiteral("chapter-title"));
     editorTitle_->setAccessibleName(QStringLiteral("Current chapter"));
+    editorTitle_->setMinimumWidth(0);
+    editorTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     editorToolbar->addWidget(editorTitle_, 1);
     previousChapterButton_ = new QPushButton(QStringLiteral("‹ Previous"), editorChrome_);
     previousChapterButton_->setObjectName(QStringLiteral("chapter-previous"));
@@ -1091,31 +1116,35 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     saveButton_->setObjectName(QStringLiteral("chapter-save"));
     connect(saveButton_, &QPushButton::clicked, this, [this] { saveCurrentChapter(); });
     editorToolbar->addWidget(saveButton_);
+    chromeLayout->addLayout(editorToolbar);
+    // A second row keeps the toolbar from forcing a window wider than a scaled screen.
+    auto *progressToolbar = new QHBoxLayout;
+    progressToolbar->addStretch();
     progressCount_ = new QLabel(editorChrome_);
     progressCount_->setObjectName(QStringLiteral("writing-word-count"));
     progressCount_->setAccessibleName(QStringLiteral("Word count"));
-    editorToolbar->addWidget(progressCount_);
+    progressToolbar->addWidget(progressCount_);
     progressGoal_ = new QLabel(editorChrome_);
     progressGoal_->setObjectName(QStringLiteral("writing-goal-count"));
     progressGoal_->setAccessibleName(QStringLiteral("Daily goal or sprint progress"));
-    editorToolbar->addWidget(progressGoal_);
+    progressToolbar->addWidget(progressGoal_);
     auto *progressButton = new QPushButton(QStringLiteral("Goals & sprints…"), editorChrome_);
     progressButton->setObjectName(QStringLiteral("writing-progress-button"));
     connect(progressButton, &QPushButton::clicked, this, &LibraryWindow::showProgress);
-    editorToolbar->addWidget(progressButton);
+    progressToolbar->addWidget(progressButton);
     openRecoveredLibraryButton_ = new QPushButton(
         QStringLiteral("Switch to Recovered Library"), editorChrome_);
     openRecoveredLibraryButton_->setObjectName(QStringLiteral("chapter-open-recovered"));
     openRecoveredLibraryButton_->setVisible(false);
     connect(openRecoveredLibraryButton_, &QPushButton::clicked,
             this, &LibraryWindow::switchToRecoveredLibrary);
-    editorToolbar->addWidget(openRecoveredLibraryButton_);
+    progressToolbar->addWidget(openRecoveredLibraryButton_);
     repairCopyButton_ = new QPushButton(QStringLiteral("Save Repair Copy…"), editorChrome_);
     repairCopyButton_->setObjectName(QStringLiteral("chapter-repair-copy"));
     repairCopyButton_->setVisible(false);
     connect(repairCopyButton_, &QPushButton::clicked, this, &LibraryWindow::saveRepairCopy);
-    editorToolbar->addWidget(repairCopyButton_);
-    chromeLayout->addLayout(editorToolbar);
+    progressToolbar->addWidget(repairCopyButton_);
+    chromeLayout->addLayout(progressToolbar);
 
     editorState_ = new QLabel(editorChrome_);
     editorState_->setObjectName(QStringLiteral("chapter-save-state"));
@@ -1151,8 +1180,10 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     bookFlow_ = new QScrollArea(editorPage_);
     bookFlow_->setObjectName(QStringLiteral("continuous-book-pages"));
     bookFlow_->setWidgetResizable(true);
+    bookFlow_->setFocusPolicy(Qt::NoFocus);
     bookFlow_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     bookPages_ = new QWidget(bookFlow_);
+    bookPages_->setFocusPolicy(Qt::NoFocus);
     bookPagesLayout_ = new QVBoxLayout(bookPages_);
     bookPagesLayout_->setContentsMargins(24, 24, 24, 24);
     bookPagesLayout_->setSpacing(24);
@@ -1316,7 +1347,12 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     });
 
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
-    QMenu *themeMenu = viewMenu->addMenu(QStringLiteral("Page theme"));
+    const auto describeSubmenu = [](QMenu *menu) {
+        menu->setAccessibleName(menu->title());
+        menu->setAccessibleDescription(QStringLiteral("submenu"));
+        return menu;
+    };
+    QMenu *themeMenu = describeSubmenu(viewMenu->addMenu(QStringLiteral("Page theme")));
     auto *themeGroup = new QActionGroup(this);
     paperAction_ = themeMenu->addAction(QStringLiteral("Paper"));
     nightAction_ = themeMenu->addAction(QStringLiteral("Night"));
@@ -1350,7 +1386,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     connect(typewriterAction_, &QAction::triggered, this, [this](bool checked) {
         savePresentationPreference(QStringLiteral("typewriter"), checked);
     });
-    QMenu *fontMenu = viewMenu->addMenu(QStringLiteral("Body typeface"));
+    QMenu *fontMenu = describeSubmenu(viewMenu->addMenu(QStringLiteral("Body typeface")));
     for (const QString &family : {QStringLiteral("Georgia"), QStringLiteral("Palatino"),
                                   QStringLiteral("Baskerville"), QStringLiteral("DejaVu Serif"),
                                   QStringLiteral("Liberation Serif"), QStringLiteral("Noto Serif")}) {
@@ -1361,7 +1397,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             savePresentationPreference(QStringLiteral("bodyFont"), family);
         });
     }
-    QMenu *dropCapMenu = viewMenu->addMenu(QStringLiteral("Drop-cap style"));
+    QMenu *dropCapMenu = describeSubmenu(viewMenu->addMenu(QStringLiteral("Drop-cap style")));
     const QStringList dropCapNames{QStringLiteral("Literary"), QStringLiteral("Fantasy"),
                                    QStringLiteral("Sci-Fi")};
     const QStringList dropCapIds{QStringLiteral("literary"), QStringLiteral("fantasy"),
@@ -1380,7 +1416,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     };
     QAction *zoomIn = viewMenu->addAction(QStringLiteral("Zoom in"));
     zoomIn->setObjectName(QStringLiteral("view-zoom-in"));
-    zoomIn->setShortcut(QKeySequence::ZoomIn);
+    // Screen readers mangle the "Ctrl++" accelerator, so list the plain Ctrl+= key first.
+    zoomIn->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_Equal), QKeySequence(QKeySequence::ZoomIn)});
     connect(zoomIn, &QAction::triggered, this, [zoomBy] { zoomBy(0.1); });
     QAction *zoomOut = viewMenu->addAction(QStringLiteral("Zoom out"));
     zoomOut->setObjectName(QStringLiteral("view-zoom-out"));
@@ -1391,7 +1428,7 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     resetZoom->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(resetZoom, &QAction::triggered,
             this, [this] { savePresentationPreference(QStringLiteral("pageZoom"), 1.0); });
-    QMenu *sizeMenu = viewMenu->addMenu(QStringLiteral("Writing text size"));
+    QMenu *sizeMenu = describeSubmenu(viewMenu->addMenu(QStringLiteral("Writing text size")));
     QAction *largerText = sizeMenu->addAction(QStringLiteral("Larger"));
     largerText->setObjectName(QStringLiteral("view-text-larger"));
     connect(largerText, &QAction::triggered, this, [this] {
@@ -2524,6 +2561,7 @@ void LibraryWindow::refreshBookPages()
         const QString id = item->data(0, ChapterIdRole).toString();
         auto *page = new QWidget(bookPages_);
         page->setObjectName(QStringLiteral("chapter-page-") + id);
+        page->setFocusPolicy(Qt::NoFocus);
         const bool night = activePreferences_.pageTheme == QStringLiteral("night");
         page->setStyleSheet(QStringLiteral("background: %1; color: %2;")
             .arg(night ? QStringLiteral("#262329") : QStringLiteral("#fffdf7"),
@@ -2571,6 +2609,7 @@ void LibraryWindow::refreshBookPages()
             text->setWordWrap(true);
             text->setTextFormat(Qt::PlainText);
             text->setTextInteractionFlags(Qt::TextSelectableByMouse);
+            text->setFocusPolicy(Qt::NoFocus);
             layout->addWidget(text);
         }
         page->setAutoFillBackground(true);
@@ -2979,6 +3018,7 @@ void LibraryWindow::showFindReplace()
     replacement->setPlaceholderText(QStringLiteral("Replace with"));
     auto *hits = new QTreeWidget(&dialog);
     hits->setObjectName(QStringLiteral("book-find-results"));
+    hits->setAccessibleName(QStringLiteral("Find results"));
     hits->setHeaderLabels({QStringLiteral("Chapter"), QStringLiteral("Match")});
     auto *message = new QLabel(&dialog);
     message->setWordWrap(true);
@@ -3270,12 +3310,21 @@ bool LibraryWindow::openDocument(const QString &relativePath,
     saveButton_->setText(QStringLiteral("Save"));
     saveButton_->setEnabled(false);
     pages_->setCurrentWidget(editorPage_);
+    const QString documentKind = outline ? QStringLiteral("Outline") : QStringLiteral("Chapter");
+    chapterEditor_->setAccessibleName(
+        (chapterReadOnly_ ? QStringLiteral("Read-only %1 source: %2").arg(documentKind.toLower(), title)
+                          : QStringLiteral("%1 text: %2").arg(documentKind, title)));
+    chapterEditor_->setAccessibleDescription(preferenceNotice_);
     if (!quietStatus) {
-        statusBar()->showMessage(chapterReadOnly_
-                                     ? (outline ? QStringLiteral("Outline is read-only")
-                                                : QStringLiteral("Chapter is read-only"))
-                                     : (outline ? QStringLiteral("Outline open; no Library files changed")
-                                                : QStringLiteral("Chapter open; no Library files changed")));
+        QString status = chapterReadOnly_
+                             ? (outline ? QStringLiteral("Outline is read-only")
+                                        : QStringLiteral("Chapter is read-only"))
+                             : (outline ? QStringLiteral("Outline open; no Library files changed")
+                                        : QStringLiteral("Chapter open; no Library files changed"));
+        if (!preferenceNotice_.isEmpty()) {
+            status += QStringLiteral(" — ") + preferenceNotice_;
+        }
+        statusBar()->showMessage(status);
     }
     if (!chapterReadOnly_) {
         chapterEditor_->setFocus();
@@ -3341,6 +3390,7 @@ void LibraryWindow::applyPreferences(const LibraryPreferences &preferences)
         ->setPreferences(activePreferences_.dropCapStyle, bodyFont,
                          activePreferences_.editorFontSize * activePreferences_.pageZoom);
     preferenceNotice_ = notices.join(QLatin1Char(' '));
+    chapterEditor_->setAccessibleDescription(preferenceNotice_);
     updatePresentation();
 }
 

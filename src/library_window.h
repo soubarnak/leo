@@ -68,6 +68,7 @@ private:
     void updateChapterNavigation();
     void refreshBookPages();
     void resizeChapterEditorToContents();
+    void clampToAvailableScreen();
     bool openOutline(QTreeWidgetItem *item);
     bool openDocument(const QString &relativePath,
                       const QString &title,
