@@ -1,6 +1,7 @@
 #include "manuscript_export.h"
 #include "book_covers.h"
 #include "library_persistence.h"
+#include "pdf_renderer.h"
 #include <QBuffer>
 #include <QDateTime>
 #include <QUuid>
@@ -64,7 +65,7 @@ QString markdownText(QString text)
     }
     return escaped;
 }
-struct Paragraph { QString text, html, markdown; bool sceneBreak = false; };
+struct Paragraph { QString text, html, markdown, align; QVector<PdfRun> runs; bool sceneBreak = false; };
 bool parseManuscriptParagraphs(const QByteArray &bytes, QVector<Paragraph> &paragraphs, QString &error)
 {
     QStringDecoder decoder(QStringDecoder::Utf8);
@@ -84,11 +85,12 @@ bool parseManuscriptParagraphs(const QByteArray &bytes, QVector<Paragraph> &para
         bool ok = true;
         const QString cleaned = clean(node, &ok);
         if (!ok) { error = "Unsupported manuscript markup."; return false; }
-        if (hasClass(node, "scene-break")) { paragraphs.append({"***", "<p style=\"text-align:center\">***</p>", "***", true}); continue; }
+        if (hasClass(node, "scene-break")) { paragraphs.append({"***", "<p style=\"text-align:center\">***</p>", "***", {}, {}, true}); continue; }
         QTextDocument document; document.setHtml(cleaned);
         Paragraph p; p.text = document.toPlainText().replace(QChar(0xa0), ' ').replace(QChar(0x2028), '\n');
         if (p.text.trimmed().isEmpty()) continue;
         QString html, md;
+        QVector<PdfRun> runs;
         for (auto block = document.begin(); block.isValid(); block = block.next()) {
             if (block != document.begin()) { html += "<br/>"; md += "  \n"; }
             for (auto it = block.begin(); !it.atEnd(); ++it) {
@@ -101,6 +103,8 @@ bool parseManuscriptParagraphs(const QByteArray &bytes, QVector<Paragraph> &para
                 if (italic) run = "<i>" + run + "</i>";
                 if (bold) run = "<b>" + run + "</b>";
                 html += run;
+                if (!runs.isEmpty() && runs.last().bold == bold && runs.last().italic == italic) runs.last().text += text;
+                else runs.append({text, bold, italic});
                 const QString mark = bold && italic ? "***" : bold ? "**" : italic ? "*" : "";
                 const auto first = text.indexOf(QRegularExpression("\\S"));
                 if (first < 0 || mark.isEmpty()) md += markdownText(text);
@@ -111,6 +115,7 @@ bool parseManuscriptParagraphs(const QByteArray &bytes, QVector<Paragraph> &para
             }
         }
         const auto align = QRegularExpression("text-align\\s*:\\s*(left|center|right|justify)", QRegularExpression::CaseInsensitiveOption).match(node.attributes.value("style"));
+        p.align = align.hasMatch() ? align.captured(1).toLower() : QString(); p.runs = runs;
         p.html = "<p" + (align.hasMatch() ? " style=\"text-align:" + align.captured(1).toLower() + "\"" : QString()) + ">" + html + "</p>";
         p.markdown = md.replace(QChar(0x2028), "  \n");
         paragraphs.append(p);
@@ -254,15 +259,17 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
                                                ManuscriptFormat format, const QString &destination, const QString &anthologyTitle = {})
 {
     if (destination.isEmpty()) return {false, "Export cancelled."};
-    if (format != ManuscriptFormat::Text && format != ManuscriptFormat::Markdown && format != ManuscriptFormat::Html && format != ManuscriptFormat::Docx && format != ManuscriptFormat::Epub) return {false, "Unknown export format."};
+    if (format != ManuscriptFormat::Text && format != ManuscriptFormat::Markdown && format != ManuscriptFormat::Html && format != ManuscriptFormat::Docx && format != ManuscriptFormat::Epub && format != ManuscriptFormat::Pdf) return {false, "Unknown export format."};
     const QString library = QFileInfo(root).canonicalFilePath();
     const QString parent = QFileInfo(QFileInfo(destination).absolutePath()).canonicalFilePath();
     const QString existing = QFileInfo(destination).canonicalFilePath();
     if (!existing.isEmpty() && (existing == library || existing.startsWith(library + '/'))) return {false, "Choose an export destination outside the Library."};
     const QString target = QDir(parent).filePath(QFileInfo(destination).fileName());
     if (parent.isEmpty() || library.isEmpty() || target == library || target.startsWith(library + '/')) return {false, "Choose an export destination outside the Library."};
+    if (format == ManuscriptFormat::Pdf && ids.size() > 1) return {false, "PDF anthologies are not supported yet."};
     QString output, error;
     EpubPublication epub;
+    PdfBook pdf;
     epub.title = anthologyTitle;
     if (!anthologyTitle.isEmpty() && format == ManuscriptFormat::Docx) output += docxParagraph("<p style=\"text-align:center\">" + anthologyTitle.toHtmlEscaped() + "</p>", "Title");
     int bookNumber = 0;
@@ -276,7 +283,11 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
         const auto book = json.object(); const auto order = book.value("chapterOrder").toArray();
         if (order.isEmpty()) return {false, "Book has no chapters."};
         const QString title = book.value("title").toString("Untitled"), author = book.value("author").toString();
-        if (format == ManuscriptFormat::Epub) {
+        if (format == ManuscriptFormat::Pdf) {
+            pdf.title = title; pdf.author = author; pdf.subtitle = book.value("subtitle").toString();
+            pdf.cover = BookCovers::exportCover(root, id);
+            if (pdf.cover.isNull()) return {false, "Could not prepare export cover."};
+        } else if (format == ManuscriptFormat::Epub) {
             if (bookNumber == 1) {
                 if (epub.title.isEmpty()) epub.title = title;
                 epub.author = author;
@@ -313,6 +324,15 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
             if (!LibraryPersistence::readLibraryFile(root, id + "/chapters/" + chapter + ".html", &source, &error)) return {false, error};
             QVector<Paragraph> paragraphs;
             if (!parseManuscriptParagraphs(source, paragraphs, error)) return {false, error};
+            if (format == ManuscriptFormat::Pdf) {
+                PdfChapter pdfChapter;
+                pdfChapter.heading = order.size() == 1 ? title : QStringLiteral("Chapter %1").arg(i + 1)
+                    + (book.value("chapterTitles").toObject().value(chapter).toString().isEmpty() ? QString()
+                       : " — " + book.value("chapterTitles").toObject().value(chapter).toString());
+                for (const auto &p : paragraphs) pdfChapter.paragraphs.append({p.runs, p.align, p.sceneBreak});
+                pdf.chapters.append(pdfChapter);
+                continue;
+            }
             if (format == ManuscriptFormat::Epub) {
                 const QString heading = order.size() == 1 ? title : QStringLiteral("Chapter %1").arg(i + 1)
                     + (book.value("chapterTitles").toObject().value(chapter).toString().isEmpty() ? QString()
@@ -341,9 +361,14 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
         QXmlStreamReader reader(output); while (!reader.atEnd()) reader.readNext();
         if (reader.hasError()) return {false, "Generated HTML failed validation."};
     }
-    const QByteArray bytes = format == ManuscriptFormat::Epub ? epub.archive(error) : format == ManuscriptFormat::Docx ? docxArchive(output, error) : output.toUtf8();
+    QByteArray bytes;
+    if (format == ManuscriptFormat::Pdf) {
+        const PdfOutput rendered = PdfRenderer::render(pdf, PdfRenderer::localePaper());
+        if (rendered.bytes.isEmpty()) return {false, rendered.error};
+        bytes = rendered.bytes;
+    } else bytes = format == ManuscriptFormat::Epub ? epub.archive(error) : format == ManuscriptFormat::Docx ? docxArchive(output, error) : output.toUtf8();
     if (bytes.isEmpty()) return {false, error};
-    if (format != ManuscriptFormat::Docx && format != ManuscriptFormat::Epub) {
+    if (format != ManuscriptFormat::Docx && format != ManuscriptFormat::Epub && format != ManuscriptFormat::Pdf) {
         QStringDecoder utf8(QStringDecoder::Utf8); utf8(bytes);
         if (utf8.hasError()) return {false, "Generated text failed validation."};
     }

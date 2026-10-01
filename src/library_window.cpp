@@ -2020,6 +2020,7 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *exportHtml = exports->addAction(QStringLiteral("HTML…"));
     QAction *exportDocx = exports->addAction(QStringLiteral("Word document…"));
     QAction *exportEpub = exports->addAction(QStringLiteral("EPUB book…"));
+    QAction *exportPdf = exports->addAction(QStringLiteral("PDF book…"));
     QMenu *covers = menu.addMenu(QStringLiteral("Cover"));
     QAction *importCover = covers->addAction(QStringLiteral("Import image…"));
     QAction *showImage = covers->addAction(QStringLiteral("Show imported image"));
@@ -2034,11 +2035,11 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *remove = menu.addAction(QStringLiteral("Remove from shelves"));
     QAction *trash = menu.addAction(QStringLiteral("Move to Trash…"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
-    if (chosen == exportText || chosen == exportMarkdown || chosen == exportHtml || chosen == exportDocx || chosen == exportEpub) {
+    if (chosen == exportText || chosen == exportMarkdown || chosen == exportHtml || chosen == exportDocx || chosen == exportEpub || chosen == exportPdf) {
         if (!saveCurrentChapter()) return;
-        const auto format = chosen == exportEpub ? ManuscriptFormat::Epub : chosen == exportText ? ManuscriptFormat::Text
+        const auto format = chosen == exportPdf ? ManuscriptFormat::Pdf : chosen == exportEpub ? ManuscriptFormat::Epub : chosen == exportText ? ManuscriptFormat::Text
             : chosen == exportMarkdown ? ManuscriptFormat::Markdown : chosen == exportDocx ? ManuscriptFormat::Docx : ManuscriptFormat::Html;
-        const QString filter = chosen == exportEpub ? QStringLiteral("EPUB book (*.epub)") : chosen == exportText ? QStringLiteral("Plain text (*.txt)")
+        const QString filter = chosen == exportPdf ? QStringLiteral("PDF book (*.pdf)") : chosen == exportEpub ? QStringLiteral("EPUB book (*.epub)") : chosen == exportText ? QStringLiteral("Plain text (*.txt)")
             : chosen == exportMarkdown ? QStringLiteral("Markdown (*.md)") : chosen == exportDocx ? QStringLiteral("Word document (*.docx)") : QStringLiteral("HTML (*.html)");
         const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export manuscript"), {}, filter);
         if (destination.isEmpty()) return;

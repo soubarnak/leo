@@ -1,6 +1,6 @@
 #pragma once
 #include <QString>
-enum class ManuscriptFormat { Text, Markdown, Html, Docx, Epub };
+enum class ManuscriptFormat { Text, Markdown, Html, Docx, Epub, Pdf };
 struct ManuscriptExportResult { bool ok = false; QString error; };
 class ManuscriptExport final {
 public:

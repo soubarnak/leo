@@ -12,6 +12,10 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
 class ExportTest : public QObject {
     Q_OBJECT
 private slots:
@@ -27,6 +31,11 @@ private slots:
     void docxBook();
     void docxShelf();
     void independentDocxReader();
+    void pdfBook();
+    void pdfUnicode();
+    void pdfLetterAndLongParagraph();
+    void pdfFailurePreservesDestination();
+    void pdfUncoveredGlyphsFail();
 };
 
 void ExportTest::orderedProse_data() {
@@ -323,6 +332,145 @@ void ExportTest::epubBook() {
         QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Epub, target).ok);
     }
     QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), original);
+}
+
+namespace {
+// Independent reader: pypdf and pdfminer in a separate process. Null object means "reader unavailable".
+QJsonObject readPdf(const QString &path, QString *error)
+{
+    QProcess reader;
+    reader.start(qEnvironmentVariable("LEO_PDF_READER_PYTHON", "python3"), {PDF_READER_SCRIPT, path});
+    if (!reader.waitForFinished(60000)) { *error = "PDF reader timed out"; return {}; }
+    if (reader.exitCode() == 3) return {};
+    if (reader.exitCode() != 0) { *error = reader.readAllStandardError(); return {}; }
+    return QJsonDocument::fromJson(reader.readAllStandardOutput()).object();
+}
+}
+
+void ExportTest::pdfBook() {
+    QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedKingdom));
+    QTemporaryDir dir, output;
+    auto put = [&](const QString &name, const QByteArray &data) {
+        QDir().mkpath(QFileInfo(dir.filePath(name)).absolutePath());
+        QFile f(dir.filePath(name)); QVERIFY(f.open(QIODevice::WriteOnly)); f.write(data);
+    };
+    put("b/book.json", R"({"title":"River Ledger","author":"Ada Example","subtitle":"A tale","chapterOrder":["two","one"],"chapterTitles":{"two":"Arrival","one":"Departure"}})");
+    put("b/chapters/two.html", R"(<p>Arrival prose with <b>bold</b>.</p><p class="scene-break">***</p><p>After the break.</p><p class="ghost" data-sec-id="g">Private outline</p><p><span class="ph-mark">Private placeholder</span></p>)");
+    put("b/chapters/one.html", R"(<p style="text-align:right">Departure prose.</p>)");
+    const QString target = output.filePath("book.pdf");
+    const auto result = ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Pdf, target);
+    QVERIFY2(result.ok, qPrintable(result.error));
+    QString error;
+    const QJsonObject pdf = readPdf(target, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    if (pdf.isEmpty()) QSKIP("pypdf and pdfminer.six are not installed; set LEO_PDF_READER_PYTHON");
+    const QJsonArray pages = pdf.value("pages").toArray();
+    // Cover, title page, then a fresh page for each chapter.
+    QCOMPARE(pages.size(), 4);
+    for (const auto &page : pages) {
+        QVERIFY(qAbs(page.toObject().value("width").toDouble() - 595.92) < 1);
+        QVERIFY(qAbs(page.toObject().value("height").toDouble() - 842.88) < 1);
+    }
+    QVERIFY(pages.at(0).toObject().value("images").toInt() >= 1);
+    for (const char *reader : {"pypdf", "pdfminer"}) {
+        const auto text = [&](int i) { return pages.at(i).toObject().value(reader).toString(); };
+        QVERIFY2(text(1).contains("River Ledger"), reader);
+        QVERIFY2(text(1).contains("A tale"), reader);
+        QVERIFY2(text(1).contains("Ada Example", Qt::CaseInsensitive), reader);
+        QVERIFY2(text(2).contains("Chapter 1", Qt::CaseInsensitive), reader);
+        QVERIFY2(text(2).contains("Arrival prose with bold."), reader);
+        QVERIFY2(text(2).contains("After the break."), reader);
+        QVERIFY2(text(2).contains("* * *"), reader);
+        QVERIFY2(text(3).contains("Departure prose."), reader);
+        for (int i = 0; i < pages.size(); ++i) {
+            QVERIFY2(!text(i).contains("Private"), reader);
+            // No default page numbers.
+            QVERIFY2(!QRegularExpression("(^|\\n)\\s*\\d+\\s*(\\n|$)").match(text(i)).hasMatch(), reader);
+        }
+    }
+}
+
+void ExportTest::pdfUnicode() {
+    QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedKingdom));
+    QTemporaryDir dir, output;
+    QDir().mkpath(dir.filePath("b/chapters"));
+    auto put = [&](const QString &name, const QByteArray &data) {
+        QFile f(dir.filePath(name)); QVERIFY(f.open(QIODevice::WriteOnly)); f.write(data);
+    };
+    put("b/book.json", R"({"title":"Scripts","chapterOrder":["a"]})");
+    put("b/chapters/a.html", QString::fromUtf8("<p>Latin café naïve.</p><p>বাংলা ভাষা</p><p>مرحبا بالعالم</p><p>é combining</p><p>Emoji 👩🏽‍💻 ok</p>").toUtf8());
+    const auto result = ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Pdf, output.filePath("s.pdf"));
+    QVERIFY2(result.ok, qPrintable(result.error));
+    QString error;
+    const QJsonObject pdf = readPdf(output.filePath("s.pdf"), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    if (pdf.isEmpty()) QSKIP("pypdf and pdfminer.six are not installed; set LEO_PDF_READER_PYTHON");
+    const QJsonArray pages = pdf.value("pages").toArray();
+    // pdfminer lays text out in logical order; pypdf returns raw stream order, so right-to-left words are only
+    // checked with pdfminer. Zero-width joiners are not kept in extracted text, so compare without them.
+    for (const char *reader : {"pypdf", "pdfminer"}) {
+        const QString text = QString(pages.at(2).toObject().value(reader).toString()).normalized(QString::NormalizationForm_C);
+        QVERIFY2(text.contains(QString::fromUtf8("café naïve")), reader);
+        QVERIFY2(text.contains(QString::fromUtf8("বাংলা ভাষা")), reader);
+        QVERIFY2(text.contains(QString::fromUtf8("é combining")), reader);
+        QVERIFY2(QString(text).remove(QChar(0x200d)).contains(QString::fromUtf8("👩🏽💻")), reader);
+    }
+    const QString arabic = pages.at(2).toObject().value("pdfminer").toString();
+    QVERIFY2(arabic.contains(QString::fromUtf8("مرحبا بالعالم")), qPrintable(arabic));
+}
+
+void ExportTest::pdfLetterAndLongParagraph() {
+    QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedStates));
+    QTemporaryDir dir, output;
+    QDir().mkpath(dir.filePath("b/chapters"));
+    QFile book(dir.filePath("b/book.json")); QVERIFY(book.open(QIODevice::WriteOnly));
+    book.write(R"({"title":"Long","chapterOrder":["a"]})"); book.close();
+    QByteArray prose = "<p>";
+    for (int i = 0; i < 600; ++i) prose += "word" + QByteArray::number(i) + " ";
+    prose += "end-of-paragraph.</p>";
+    QFile chapter(dir.filePath("b/chapters/a.html")); QVERIFY(chapter.open(QIODevice::WriteOnly)); chapter.write(prose); chapter.close();
+    const auto result = ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Pdf, output.filePath("l.pdf"));
+    QVERIFY2(result.ok, qPrintable(result.error));
+    QString error;
+    const QJsonObject pdf = readPdf(output.filePath("l.pdf"), &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    if (pdf.isEmpty()) QSKIP("pypdf and pdfminer.six are not installed; set LEO_PDF_READER_PYTHON");
+    const QJsonArray pages = pdf.value("pages").toArray();
+    QVERIFY2(pages.size() >= 4, "one long paragraph must flow across several pages");
+    for (const auto &page : pages) {
+        QCOMPARE(page.toObject().value("width").toDouble(), 612.0);
+        QCOMPARE(page.toObject().value("height").toDouble(), 792.0);
+    }
+    QVERIFY(pages.at(2).toObject().value("pypdf").toString().contains("word0"));
+    QVERIFY(pages.at(pages.size() - 1).toObject().value("pypdf").toString().contains("end-of-paragraph."));
+}
+
+void ExportTest::pdfFailurePreservesDestination() {
+    QTemporaryDir dir, output;
+    QDir().mkpath(dir.filePath("b/chapters"));
+    QFile book(dir.filePath("b/book.json")); QVERIFY(book.open(QIODevice::WriteOnly));
+    book.write(R"({"title":"T","chapterOrder":["a"]})"); book.close();
+    QFile chapter(dir.filePath("b/chapters/a.html")); QVERIFY(chapter.open(QIODevice::WriteOnly)); chapter.write("<p>Fine.</p>"); chapter.close();
+    const QString target = output.filePath("keep.pdf");
+    QFile keep(target); QVERIFY(keep.open(QIODevice::WriteOnly)); keep.write("Original PDF"); keep.close();
+    QVERIFY(chapter.open(QIODevice::WriteOnly | QIODevice::Truncate)); chapter.write("<p>Broken"); chapter.close();
+    QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Pdf, target).ok);
+    QVERIFY(!ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Pdf, output.filePath("missing/dir.pdf")).ok);
+    QVERIFY(keep.open(QIODevice::ReadOnly)); QCOMPARE(keep.readAll(), QByteArray("Original PDF")); keep.close();
+    QCOMPARE(QDir(output.path()).entryList(QDir::Files | QDir::Hidden).size(), 1); // no partial temporary output
+}
+
+void ExportTest::pdfUncoveredGlyphsFail() {
+    QTemporaryDir dir, output;
+    QDir().mkpath(dir.filePath("b/chapters"));
+    QFile book(dir.filePath("b/book.json")); QVERIFY(book.open(QIODevice::WriteOnly));
+    book.write(R"({"title":"T","chapterOrder":["a"]})"); book.close();
+    QFile chapter(dir.filePath("b/chapters/a.html")); QVERIFY(chapter.open(QIODevice::WriteOnly));
+    chapter.write("<p>No font has U+10FFFD: \xF4\x8F\xBF\xBD</p>"); chapter.close();
+    const auto result = ManuscriptExport::write(dir.path(), "b", ManuscriptFormat::Pdf, output.filePath("x.pdf"));
+    QVERIFY(!result.ok);
+    QVERIFY2(result.error.contains("font"), qPrintable(result.error));
+    QVERIFY(!QFileInfo::exists(output.filePath("x.pdf")));
 }
 
 QTEST_MAIN(ExportTest)
