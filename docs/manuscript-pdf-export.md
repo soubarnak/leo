@@ -1,6 +1,6 @@
 # PDF export
 
-A writer exports a book as a searchable PDF from the book's context menu (Export manuscript → PDF book). Pango and Cairo render an application-owned model of the manuscript; Library HTML is never printed directly.
+A writer exports a book as a searchable PDF from the book's context menu (Export manuscript → PDF book), or a whole shelf from the shelf's context menu (Export PDF anthology). An anthology starts with a title page showing the shelf name, then each book in shelf order with its own cover, title page and chapters. A book listed twice on a shelf appears once. The same layout, font and failure rules apply. Pango and Cairo render an application-owned model of the manuscript; Library HTML is never printed directly.
 
 Page layout follows the NEO baseline:
 

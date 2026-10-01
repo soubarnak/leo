@@ -69,6 +69,7 @@ public:
         cairo_surface_finish(surface_);
         return cairo_surface_status(surface_) == CAIRO_STATUS_SUCCESS && cairo_status(cr_) == CAIRO_STATUS_SUCCESS;
     }
+    void skip(double points) { y_ += points; }
     void newPage(double top = Margin) { cairo_show_page(cr_); ++pages; y_ = top; }
     double contentHeight() const { return height_ - 2 * Margin; }
     int unknownGlyphs = 0;
@@ -146,35 +147,48 @@ PdfPaper PdfRenderer::localePaper()
     }
 }
 
-PdfOutput PdfRenderer::render(const PdfBook &book, PdfPaper paper)
+PdfOutput PdfRenderer::render(const QVector<PdfBook> &books, PdfPaper paper, const QString &anthologyTitle)
 {
     PdfOutput out;
+    if (books.isEmpty()) return {{}, "There is no book to export."};
+    qsizetype expectedPages = anthologyTitle.isEmpty() ? 0 : 1;
     {
         Canvas page(&out.bytes, paper);
-        page.image(book.cover);
-        page.newPage(Margin + 0.30 * page.contentHeight());
-        page.block(book.title.toHtmlEscaped().toUtf8(), SERIF " Bold 30", "center", 51);
-        if (!book.subtitle.isEmpty()) page.block("<i>" + book.subtitle.toHtmlEscaped().toUtf8() + "</i>", SERIF " 13", "center", BodyLine);
-        page.block(book.author.toUpper().toHtmlEscaped().toUtf8(), SERIF " 11", "center", 1.7 * 11, 30);
-        for (const auto &chapter : book.chapters) {
-            page.newPage(Margin);
-            page.block(chapter.heading.toHtmlEscaped().toUtf8(), SERIF " 12", "center", 1.7 * 12, 45, 30);
-            bool first = true, afterBreak = false;
-            for (const auto &paragraph : chapter.paragraphs) {
-                if (paragraph.sceneBreak) {
-                    page.block("* * *", SERIF " 13", "center", BodyLine, 1.0 * 32.5, 32.5);
-                    afterBreak = true;
-                    continue;
+        bool firstPage = true;
+        if (!anthologyTitle.isEmpty()) {
+            page.skip(0.30 * page.contentHeight());
+            page.block(anthologyTitle.toHtmlEscaped().toUtf8(), SERIF " Bold 30", "center", 51);
+            firstPage = false;
+        }
+        for (const auto &book : books) {
+            expectedPages += 2 + book.chapters.size();
+            if (!firstPage) page.newPage();
+            firstPage = false;
+            page.image(book.cover);
+            page.newPage(Margin + 0.30 * page.contentHeight());
+            page.block(book.title.toHtmlEscaped().toUtf8(), SERIF " Bold 30", "center", 51);
+            if (!book.subtitle.isEmpty()) page.block("<i>" + book.subtitle.toHtmlEscaped().toUtf8() + "</i>", SERIF " 13", "center", BodyLine);
+            page.block(book.author.toUpper().toHtmlEscaped().toUtf8(), SERIF " 11", "center", 1.7 * 11, 30);
+            for (const auto &chapter : book.chapters) {
+                page.newPage(Margin);
+                page.block(chapter.heading.toHtmlEscaped().toUtf8(), SERIF " 12", "center", 1.7 * 12, 45, 30);
+                bool first = true, afterBreak = false;
+                for (const auto &paragraph : chapter.paragraphs) {
+                    if (paragraph.sceneBreak) {
+                        page.block("* * *", SERIF " 13", "center", BodyLine, 1.0 * 32.5, 32.5);
+                        afterBreak = true;
+                        continue;
+                    }
+                    const bool flush = first || afterBreak || paragraph.align == "center" || paragraph.align == "right";
+                    page.block(markup(paragraph.runs, first), SERIF " 13", paragraph.align, BodyLine, 0, 0, flush ? 0 : 2 * BodySize);
+                    first = false; afterBreak = false;
                 }
-                const bool flush = first || afterBreak || paragraph.align == "center" || paragraph.align == "right";
-                page.block(markup(paragraph.runs, first), SERIF " 13", paragraph.align, BodyLine, 0, 0, flush ? 0 : 2 * BodySize);
-                first = false; afterBreak = false;
             }
         }
         if (!page.ok()) return {{}, "Could not start the PDF."};
         if (!page.finish()) return {{}, "Could not render the PDF."};
-        // Cover, title page and one page per chapter at minimum; a shortfall means a page was lost.
-        if (page.pages < 2 + book.chapters.size()) return {{}, "The PDF is missing pages, so it was not created."};
+        // Every cover, title page and chapter starts a page; with the anthology title page that is the minimum; a shortfall means a page was lost.
+        if (page.pages < expectedPages) return {{}, "The PDF is missing pages, so it was not created."};
         if (page.unknownGlyphs > 0) return {{}, "No installed font covers every character in this book, so the PDF was not created."};
     }
     const QByteArray tail = out.bytes.right(1024);

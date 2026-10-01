@@ -1946,17 +1946,19 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
         QAction *import = menu.addAction(QStringLiteral("Import manuscript…"));
         QAction *anthology = menu.addAction(QStringLiteral("Export DOCX anthology…"));
         QAction *epubAnthology = menu.addAction(QStringLiteral("Export EPUB anthology…"));
+        QAction *pdfAnthology = menu.addAction(QStringLiteral("Export PDF anthology…"));
         QAction *rename = menu.addAction(QStringLiteral("Rename shelf…"));
         QAction *remove = menu.addAction(QStringLiteral("Delete shelf…"));
         QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
         if (chosen == newBook) {
             createBookFromSelection();
-        } else if (chosen == anthology || chosen == epubAnthology) {
+        } else if (chosen == anthology || chosen == epubAnthology || chosen == pdfAnthology) {
             if (!saveCurrentChapter()) return;
-            const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export anthology"), {}, chosen == epubAnthology ? QStringLiteral("EPUB book (*.epub)") : QStringLiteral("Word document (*.docx)"));
+            const QString destination = QFileDialog::getSaveFileName(this, QStringLiteral("Export anthology"), {},
+                chosen == pdfAnthology ? QStringLiteral("PDF book (*.pdf)") : chosen == epubAnthology ? QStringLiteral("EPUB book (*.epub)") : QStringLiteral("Word document (*.docx)"));
             if (destination.isEmpty()) return;
             const auto result = ManuscriptExport::writeShelf(activeLibraryPath_, shelfId, destination,
-                chosen == epubAnthology ? ManuscriptFormat::Epub : ManuscriptFormat::Docx);
+                chosen == pdfAnthology ? ManuscriptFormat::Pdf : chosen == epubAnthology ? ManuscriptFormat::Epub : ManuscriptFormat::Docx);
             if (!result.ok) QMessageBox::warning(this, QStringLiteral("Export failed"), result.error);
             else statusBar()->showMessage(QStringLiteral("Anthology exported."), 5000);
         } else if (chosen == import) {

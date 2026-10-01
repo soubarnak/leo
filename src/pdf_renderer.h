@@ -14,5 +14,6 @@ public:
     // Letter is a North American habit; most of the world prints A4.
     static PdfPaper localePaper();
     // Renders into memory so the caller can publish atomically; any failure yields an empty result and an error.
-    static PdfOutput render(const PdfBook &book, PdfPaper paper);
+    // One book, or an anthology of several: a non-empty anthologyTitle adds a leading title page.
+    static PdfOutput render(const QVector<PdfBook> &books, PdfPaper paper, const QString &anthologyTitle = {});
 };

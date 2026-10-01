@@ -266,10 +266,9 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
     if (!existing.isEmpty() && (existing == library || existing.startsWith(library + '/'))) return {false, "Choose an export destination outside the Library."};
     const QString target = QDir(parent).filePath(QFileInfo(destination).fileName());
     if (parent.isEmpty() || library.isEmpty() || target == library || target.startsWith(library + '/')) return {false, "Choose an export destination outside the Library."};
-    if (format == ManuscriptFormat::Pdf && ids.size() > 1) return {false, "PDF anthologies are not supported yet."};
     QString output, error;
     EpubPublication epub;
-    PdfBook pdf;
+    QVector<PdfBook> pdfBooks;
     epub.title = anthologyTitle;
     if (!anthologyTitle.isEmpty() && format == ManuscriptFormat::Docx) output += docxParagraph("<p style=\"text-align:center\">" + anthologyTitle.toHtmlEscaped() + "</p>", "Title");
     int bookNumber = 0;
@@ -284,9 +283,10 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
         if (order.isEmpty()) return {false, "Book has no chapters."};
         const QString title = book.value("title").toString("Untitled"), author = book.value("author").toString();
         if (format == ManuscriptFormat::Pdf) {
-            pdf.title = title; pdf.author = author; pdf.subtitle = book.value("subtitle").toString();
-            pdf.cover = BookCovers::exportCover(root, id);
-            if (pdf.cover.isNull()) return {false, "Could not prepare export cover."};
+            pdfBooks.append(PdfBook());
+            pdfBooks.last().title = title; pdfBooks.last().author = author; pdfBooks.last().subtitle = book.value("subtitle").toString();
+            pdfBooks.last().cover = BookCovers::exportCover(root, id);
+            if (pdfBooks.last().cover.isNull()) return {false, "Could not prepare export cover."};
         } else if (format == ManuscriptFormat::Epub) {
             if (bookNumber == 1) {
                 if (epub.title.isEmpty()) epub.title = title;
@@ -330,7 +330,7 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
                     + (book.value("chapterTitles").toObject().value(chapter).toString().isEmpty() ? QString()
                        : " — " + book.value("chapterTitles").toObject().value(chapter).toString());
                 for (const auto &p : paragraphs) pdfChapter.paragraphs.append({p.runs, p.align, p.sceneBreak});
-                pdf.chapters.append(pdfChapter);
+                pdfBooks.last().chapters.append(pdfChapter);
                 continue;
             }
             if (format == ManuscriptFormat::Epub) {
@@ -363,7 +363,7 @@ static ManuscriptExportResult writeSelection(const QString &root, const QStringL
     }
     QByteArray bytes;
     if (format == ManuscriptFormat::Pdf) {
-        const PdfOutput rendered = PdfRenderer::render(pdf, PdfRenderer::localePaper());
+        const PdfOutput rendered = PdfRenderer::render(pdfBooks, PdfRenderer::localePaper(), anthologyTitle);
         if (rendered.bytes.isEmpty()) return {false, rendered.error};
         bytes = rendered.bytes;
     } else bytes = format == ManuscriptFormat::Epub ? epub.archive(error) : format == ManuscriptFormat::Docx ? docxArchive(output, error) : output.toUtf8();
@@ -387,7 +387,7 @@ ManuscriptExportResult ManuscriptExport::write(const QString &root, const QStrin
 ManuscriptExportResult ManuscriptExport::writeShelf(const QString &root, const QString &shelfId,
                                                     const QString &destination, ManuscriptFormat format)
 {
-    if (format != ManuscriptFormat::Docx && format != ManuscriptFormat::Epub) return {false, "Unsupported anthology format."};
+    if (format != ManuscriptFormat::Docx && format != ManuscriptFormat::Epub && format != ManuscriptFormat::Pdf) return {false, "Unsupported anthology format."};
     QByteArray bytes; QString error;
     if (!LibraryPersistence::readLibraryFile(root, "library.json", &bytes, &error)) return {false, error};
     QJsonParseError parse;

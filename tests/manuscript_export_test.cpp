@@ -36,6 +36,7 @@ private slots:
     void pdfLetterAndLongParagraph();
     void pdfFailurePreservesDestination();
     void pdfUncoveredGlyphsFail();
+    void pdfShelfAnthology();
     void pdfMatchesNeoBaseline_data();
     void pdfMatchesNeoBaseline();
 };
@@ -506,6 +507,46 @@ void ExportTest::pdfMatchesNeoBaseline() {
         starts << match.captured(1).toInt();
     }
     QCOMPARE(starts, continuations);
+}
+
+void ExportTest::pdfShelfAnthology() {
+    QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedKingdom));
+    QTemporaryDir dir, output;
+    auto put = [&](const QString &name, const QByteArray &data) {
+        QDir().mkpath(QFileInfo(dir.filePath(name)).absolutePath());
+        QFile f(dir.filePath(name)); QVERIFY(f.open(QIODevice::WriteOnly)); f.write(data);
+    };
+    put("a/book.json", R"({"title":"First Tale","author":"Ada","chapterOrder":["one","two"],"chapterTitles":{"one":"Dawn","two":"Dusk"}})");
+    put("a/chapters/one.html", "<p>Alpha prose.</p>");
+    put("a/chapters/two.html", "<p>Beta prose.</p>");
+    put("b/book.json", R"({"title":"Second Tale","author":"Bo","chapterOrder":["one"]})");
+    put("b/chapters/one.html", "<p>Gamma prose.</p>");
+    put("library.json", R"({"shelves":[{"id":"s","name":"Collected Works","bookIds":["b","a","b"]}]})");
+    const QString target = output.filePath("shelf.pdf");
+    const auto result = ManuscriptExport::writeShelf(dir.path(), "s", target, ManuscriptFormat::Pdf);
+    QVERIFY2(result.ok, qPrintable(result.error));
+    QString error;
+    const QJsonObject pdf = readPdf(target, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    if (pdf.isEmpty()) QSKIP("pypdf and pdfminer.six are not installed; set LEO_PDF_READER_PYTHON");
+    const QJsonArray pages = pdf.value("pages").toArray();
+    // Anthology title, then per book: cover, title page and one page per chapter. Shelf order, duplicates dropped.
+    QCOMPARE(pages.size(), 1 + (1 + 1 + 1) + (1 + 1 + 2));
+    for (const char *reader : {"pypdf", "pdfminer"}) {
+        const auto text = [&](int i) { return pages.at(i).toObject().value(reader).toString(); };
+        QVERIFY2(text(0).contains("Collected Works"), reader);
+        QVERIFY2(text(2).contains("Second Tale"), reader);
+        QVERIFY2(text(3).contains("Gamma prose."), reader);
+        QVERIFY2(text(5).contains("First Tale"), reader);
+        QVERIFY2(text(6).contains("Alpha prose."), reader);
+        QVERIFY2(text(7).contains("Beta prose."), reader);
+    }
+    QVERIFY(pages.at(1).toObject().value("images").toInt() >= 1);
+    QVERIFY(pages.at(4).toObject().value("images").toInt() >= 1);
+    QFile file(target); QVERIFY(file.open(QIODevice::ReadOnly)); const auto original = file.readAll(); file.close();
+    QFile::remove(dir.filePath("a/chapters/two.html"));
+    QVERIFY(!ManuscriptExport::writeShelf(dir.path(), "s", target, ManuscriptFormat::Pdf).ok);
+    QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), original);
 }
 
 QTEST_MAIN(ExportTest)
