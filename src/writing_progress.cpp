@@ -146,6 +146,8 @@ bool WritingProgress::setGoals(int dailyGoal, int bookGoal, int dayEndsAt, QStri
         *error = QStringLiteral("Goals and writing-day boundary are out of range.");
         return false;
     }
+    if (!reloadFile(QStringLiteral("library.json"), &libraryBytes_, error) ||
+        !reloadFile(bookId_ + QStringLiteral("/book.json"), &bookBytes_, error)) return false;
     QJsonObject library = QJsonDocument::fromJson(libraryBytes_).object();
     library.insert(QStringLiteral("dailyGoal"), dailyGoal);
     library.insert(QStringLiteral("dayEndsAt"), dayEndsAt);
@@ -177,6 +179,11 @@ bool WritingProgress::setGoals(int dailyGoal, int bookGoal, int dayEndsAt, QStri
 }
 
 WritingProgressSnapshot WritingProgress::snapshot() const { return data_; }
+
+void WritingProgress::refreshDay(const QDateTime &now)
+{
+    data_.day = resolveDay(now, data_.dayEndsAt);
+}
 
 void WritingSprint::start(const QString &bookId, int bookWords, int target)
 {
@@ -223,8 +230,23 @@ int WritingSprint::progress(int bookWords) const
     return phase_ == Phase::Complete ? achieved_ : bookWords - startWords_;
 }
 
+bool WritingProgress::reloadFile(const QString &relativePath, QByteArray *bytes, QString *error)
+{
+    // Preferences, spellcheck and cover edits rewrite these files outside this object.
+    // Merge progress fields into the current bytes so the save hash matches what is on disk.
+    QByteArray current;
+    if (!LibraryPersistence::readLibraryFile(libraryPath_, relativePath, &current, error)) return false;
+    if (!QJsonDocument::fromJson(current).isObject()) {
+        *error = QStringLiteral("Progress metadata is invalid JSON.");
+        return false;
+    }
+    *bytes = std::move(current);
+    return true;
+}
+
 bool WritingProgress::saveBook(QString *error)
 {
+    if (!reloadFile(bookId_ + QStringLiteral("/book.json"), &bookBytes_, error)) return false;
     QJsonObject book = QJsonDocument::fromJson(bookBytes_).object();
     book.insert(QStringLiteral("wordCount"), data_.bookWords);
     book.insert(QStringLiteral("wordGoal"), data_.bookGoal);

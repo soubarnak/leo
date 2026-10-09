@@ -3979,6 +3979,7 @@ void LibraryWindow::refreshProgress()
     if (selectionCount > 0)
         countLabel += QStringLiteral(" · %1 selected").arg(selectionCount);
     progressCount_->setText(countLabel);
+    progress_->refreshDay(QDateTime::currentDateTime());
     const WritingProgressSnapshot snapshot = progress_->snapshot();
     sprint_.observe(activeBookId_, total);
     if (sprint_.complete(activeBookId_)) {
@@ -4004,6 +4005,7 @@ void LibraryWindow::showProgress()
     QDialog dialog(this);
     dialog.setWindowTitle(QStringLiteral("Writing progress"));
     auto *layout = new QVBoxLayout(&dialog);
+    progress_->refreshDay(QDateTime::currentDateTime());
     const WritingProgressSnapshot snapshot = progress_->snapshot();
     QString countError;
     const int total = WritingProgress::countBook(activeLibraryPath_, activeBookId_,
@@ -4112,6 +4114,11 @@ void LibraryWindow::showProgress()
         if (!progress_->setGoals(daily->value(), book->value(), boundary->value(), &error)) {
             QMessageBox::warning(&dialog, QStringLiteral("Goals not saved"), error);
             return;
+        }
+        // Like preference edits, the goals rewrite library.json; refresh the organization's cached hash.
+        if (organization_ && !organization_->load(&error)) {
+            statusBar()->showMessage(QStringLiteral("Goals saved; reopen the Library before organizing: %1")
+                                         .arg(error));
         }
         refreshProgress();
         dialog.accept();

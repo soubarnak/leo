@@ -51,6 +51,7 @@ public:
               const QDateTime &now = QDateTime::currentDateTime());
     bool updateCount(int count, const QDateTime &now, QString *error);
     bool setGoals(int dailyGoal, int bookGoal, int dayEndsAt, QString *error);
+    void refreshDay(const QDateTime &now);
     WritingProgressSnapshot snapshot() const;
     static int countWords(const QString &text);
     static QDate writingDay(const QDateTime &now, int dayEndsAt);
@@ -60,6 +61,7 @@ public:
 
 private:
     bool saveBook(QString *error);
+    bool reloadFile(const QString &relativePath, QByteArray *bytes, QString *error);
     QDate resolveDay(const QDateTime &now, int dayEndsAt) const;
     QString libraryPath_;
     QString bookId_;

@@ -10,15 +10,26 @@
 class WritingProgressTest final : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase()
+    {
+        // Conflict drafts and safety snapshots must never land in the real user data directory.
+        QVERIFY(dataHome_.isValid());
+        qputenv("XDG_DATA_HOME", dataHome_.path().toLocal8Bit());
+    }
     void countsAndHistorySurviveReopen();
     void lateSessionAndClockRollbackUseOneDay();
     void reopenAfterClockRollbackKeepsLastWritingDay();
     void wordsSeparatedByParagraphBreaksOrNonBreakingSpacesAreCounted();
     void writingDayBoundaryIsConfigurableAndExclusiveAtHour();
+    void refreshDayFollowsClockWithoutSaving();
+    void savesSurviveOtherLibraryRewritesAfterLoad();
     void sprintCompletionSurvivesLaterDeletions();
     void sprintCountReductionBeforeTargetKeepsSprintRunning();
     void sprintCancelOnlyEndsRunningSprint();
     void sprintIsScopedToItsBook();
+
+private:
+    QTemporaryDir dataHome_;
 };
 
 static void writeFixture(const QString &path, const QString &relative, const QByteArray &bytes)
@@ -105,8 +116,8 @@ void WritingProgressTest::reopenAfterClockRollbackKeepsLastWritingDay()
 void WritingProgressTest::wordsSeparatedByParagraphBreaksOrNonBreakingSpacesAreCounted()
 {
     // QTextCursor::selectedText() joins lines with U+2029; manuscripts use U+00A0.
-    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha beta")), 2);
-    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha beta")), 2);
+    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha\u2029beta")), 2);
+    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha\u00A0beta")), 2);
     QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha\nbeta\tgamma")), 3);
 }
 
@@ -117,6 +128,49 @@ void WritingProgressTest::writingDayBoundaryIsConfigurableAndExclusiveAtHour()
     QCOMPARE(WritingProgress::writingDay(at("2026-10-01T03:00:00"), 3), QDate(2026, 10, 1));
     QCOMPARE(WritingProgress::writingDay(at("2026-10-01T00:30:00"), 0), QDate(2026, 10, 1));
     QCOMPARE(WritingProgress::writingDay(at("2026-10-01T05:30:00"), 6), QDate(2026, 9, 30));
+}
+
+void WritingProgressTest::refreshDayFollowsClockWithoutSaving()
+{
+    QTemporaryDir library;
+    QVERIFY(library.isValid());
+    writeFixture(library.path(), "library.json", R"({"dayEndsAt":3})");
+    writeFixture(library.path(), "book/book.json", R"({"chapterOrder":[]})");
+    QString error;
+    WritingProgress progress(library.path());
+    QVERIFY(progress.load("book", &error, QDateTime::fromString("2026-09-30T23:00:00", Qt::ISODate)));
+    QCOMPARE(progress.snapshot().day, QDate(2026, 9, 30));
+    // Open past the boundary with no save: "today" must move to the new writing day.
+    progress.refreshDay(QDateTime::fromString("2026-10-01T04:00:00", Qt::ISODate));
+    QCOMPARE(progress.snapshot().day, QDate(2026, 10, 1));
+}
+
+void WritingProgressTest::savesSurviveOtherLibraryRewritesAfterLoad()
+{
+    QTemporaryDir library;
+    QVERIFY(library.isValid());
+    writeFixture(library.path(), "library.json", R"({"dayEndsAt":3})");
+    writeFixture(library.path(), "book/book.json", R"({"chapterOrder":[]})");
+    QString error;
+    WritingProgress progress(library.path());
+    QVERIFY(progress.load("book", &error));
+    // Preferences, spellcheck and cover edits rewrite these files after progress loaded.
+    writeFixture(library.path(), "library.json", R"({"dayEndsAt":3,"spellcheck":true})");
+    writeFixture(library.path(), "book/book.json", R"({"chapterOrder":[],"coverAdded":true})");
+    QVERIFY2(progress.setGoals(120, 1000, 3, &error), qPrintable(error));
+    QVERIFY2(progress.updateCount(7, QDateTime::fromString("2026-10-01T10:00:00", Qt::ISODate), &error),
+             qPrintable(error));
+    WritingProgress reopened(library.path());
+    QVERIFY2(reopened.load("book", &error), qPrintable(error));
+    QCOMPARE(reopened.snapshot().dailyGoal, 120);
+    QCOMPARE(reopened.snapshot().bookGoal, 1000);
+    QCOMPARE(reopened.snapshot().bookWords, 7);
+    QFile libraryFile(QDir(library.path()).filePath("library.json"));
+    QVERIFY(libraryFile.open(QIODevice::ReadOnly));
+    QVERIFY(QJsonDocument::fromJson(libraryFile.readAll()).object().value("spellcheck").toBool());
+    QFile bookFile(QDir(library.path()).filePath("book/book.json"));
+    QVERIFY(bookFile.open(QIODevice::ReadOnly));
+    QVERIFY(QJsonDocument::fromJson(bookFile.readAll()).object().value("coverAdded").toBool());
 }
 
 void WritingProgressTest::sprintCompletionSurvivesLaterDeletions()
