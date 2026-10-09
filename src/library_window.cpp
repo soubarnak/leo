@@ -208,8 +208,10 @@ void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline,
         chapterItem->setData(0, ItemKindRole, ChapterItemKind);
         chapterItem->setData(0, BookIdRole, book.id);
         chapterItem->setData(0, ChapterIdRole, chapter.id);
-        chapterItem->setFlags(chapterItem->flags() &
-                              ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
+        // Chapters are leaves; saying so keeps assistive tech from reporting them as expanded.
+        chapterItem->setFlags((chapterItem->flags() &
+                               ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled)) |
+                              Qt::ItemNeverHasChildren);
     }
     if (hasOutline) {
         auto *outlineItem = new QTreeWidgetItem(bookItem, {QStringLiteral("Outline")});

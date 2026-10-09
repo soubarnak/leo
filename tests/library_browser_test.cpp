@@ -2,6 +2,8 @@
 #include "font_preferences.h"
 
 #include <QApplication>
+#include <QAccessible>
+#include <QAccessibleInterface>
 #include <QAction>
 #include <QAbstractButton>
 #include <QClipboard>
@@ -270,6 +272,22 @@ private:
 QTreeWidgetItem *singleChapterItem(QTreeWidget *tree)
 {
     return tree->topLevelItem(0)->child(0)->child(0)->child(0);
+}
+
+QAccessibleInterface *findAccessibleNamed(QAccessibleInterface *root, const QString &name)
+{
+    if (!root) {
+        return nullptr;
+    }
+    if (root->text(QAccessible::Name) == name) {
+        return root;
+    }
+    for (int i = 0; i < root->childCount(); ++i) {
+        if (QAccessibleInterface *found = findAccessibleNamed(root->child(i), name)) {
+            return found;
+        }
+    }
+    return nullptr;
 }
 
 void openSingleChapter(LibraryWindow *window)
@@ -2276,6 +2294,30 @@ private slots:
         QVERIFY2(window.height() <= available.height(), qPrintable(QString::number(window.height())));
         QVERIFY2(window.minimumSizeHint().width() <= available.width(),
                  qPrintable(QString::number(window.minimumSizeHint().width())));
+    }
+
+    void leafChapterIsNotReportedAsExpanded()
+    {
+        QTemporaryDir library = makeSingleChapterLibrary(QByteArrayLiteral("<p>Opening line.</p>"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        window.show();
+        QApplication::processEvents();
+        auto *tree = window.findChild<QTreeWidget *>("library-tree");
+        QVERIFY(tree);
+        QTreeWidgetItem *chapter = singleChapterItem(tree);
+        const QString chapterLabel = chapter->text(0);
+        QVERIFY(chapterLabel.contains(QStringLiteral("Arrival")));
+
+        QAccessibleInterface *treeAccessible = QAccessible::queryAccessibleInterface(tree);
+        QVERIFY(treeAccessible);
+        QAccessibleInterface *chapterAccessible =
+            findAccessibleNamed(treeAccessible, chapterLabel);
+        QVERIFY2(chapterAccessible, "chapter row is missing from the accessibility tree");
+        QVERIFY2(!chapterAccessible->state().expandable, "leaf chapter reported as expandable");
+        QVERIFY2(!chapterAccessible->state().expanded, "leaf chapter reported as expanded");
+        QVERIFY2(!chapter->isExpanded(), "leaf chapter item is marked expanded");
     }
 
     void libraryTreeKeepsNamesReadableAtLargeFontSizes()
