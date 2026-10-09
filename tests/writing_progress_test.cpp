@@ -12,6 +12,13 @@ class WritingProgressTest final : public QObject {
 private slots:
     void countsAndHistorySurviveReopen();
     void lateSessionAndClockRollbackUseOneDay();
+    void reopenAfterClockRollbackKeepsLastWritingDay();
+    void wordsSeparatedByParagraphBreaksOrNonBreakingSpacesAreCounted();
+    void writingDayBoundaryIsConfigurableAndExclusiveAtHour();
+    void sprintCompletionSurvivesLaterDeletions();
+    void sprintCountReductionBeforeTargetKeepsSprintRunning();
+    void sprintCancelOnlyEndsRunningSprint();
+    void sprintIsScopedToItsBook();
 };
 
 static void writeFixture(const QString &path, const QString &relative, const QByteArray &bytes)
@@ -72,6 +79,103 @@ void WritingProgressTest::lateSessionAndClockRollbackUseOneDay()
     QCOMPARE(progress.snapshot().history.value(QDate(2026, 10, 1)).end, 15);
     QCOMPARE(progress.snapshot().history.value(QDate(2026, 10, 1)).end -
              progress.snapshot().history.value(QDate(2026, 10, 1)).start, 3);
+}
+
+void WritingProgressTest::reopenAfterClockRollbackKeepsLastWritingDay()
+{
+    QTemporaryDir library;
+    QVERIFY(library.isValid());
+    writeFixture(library.path(), "library.json", R"({"dayEndsAt":3})");
+    writeFixture(library.path(), "book/book.json", R"({"chapterOrder":[]})");
+    QString error;
+    WritingProgress first(library.path());
+    QVERIFY(first.load("book", &error, QDateTime::fromString("2026-10-01T04:00:00", Qt::ISODate)));
+    QVERIFY(first.updateCount(20, QDateTime::fromString("2026-10-01T04:00:00", Qt::ISODate), &error));
+    // Clock rolled back before the recorded day, then the book is reopened.
+    WritingProgress reopened(library.path());
+    QVERIFY(reopened.load("book", &error, QDateTime::fromString("2026-09-30T22:00:00", Qt::ISODate)));
+    QCOMPARE(reopened.snapshot().day, QDate(2026, 10, 1));
+    QVERIFY(reopened.updateCount(25, QDateTime::fromString("2026-09-30T22:05:00", Qt::ISODate), &error));
+    QCOMPARE(reopened.snapshot().history.size(), 1);
+    QCOMPARE(reopened.snapshot().history.value(QDate(2026, 10, 1)).start, 0);
+    QCOMPARE(reopened.snapshot().history.value(QDate(2026, 10, 1)).end, 25);
+    QCOMPARE(reopened.snapshot().todayWords(), 25);
+}
+
+void WritingProgressTest::wordsSeparatedByParagraphBreaksOrNonBreakingSpacesAreCounted()
+{
+    // QTextCursor::selectedText() joins lines with U+2029; manuscripts use U+00A0.
+    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha beta")), 2);
+    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha beta")), 2);
+    QCOMPARE(WritingProgress::countWords(QStringLiteral("alpha\nbeta\tgamma")), 3);
+}
+
+void WritingProgressTest::writingDayBoundaryIsConfigurableAndExclusiveAtHour()
+{
+    const auto at = [](const char *iso) { return QDateTime::fromString(QString::fromLatin1(iso), Qt::ISODate); };
+    QCOMPARE(WritingProgress::writingDay(at("2026-10-01T02:59:59"), 3), QDate(2026, 9, 30));
+    QCOMPARE(WritingProgress::writingDay(at("2026-10-01T03:00:00"), 3), QDate(2026, 10, 1));
+    QCOMPARE(WritingProgress::writingDay(at("2026-10-01T00:30:00"), 0), QDate(2026, 10, 1));
+    QCOMPARE(WritingProgress::writingDay(at("2026-10-01T05:30:00"), 6), QDate(2026, 9, 30));
+}
+
+void WritingProgressTest::sprintCompletionSurvivesLaterDeletions()
+{
+    const QString book = QStringLiteral("book");
+    WritingSprint sprint;
+    sprint.start(book, 100, 5);
+    QVERIFY(sprint.running(book));
+    sprint.observe(book, 103);
+    QVERIFY(sprint.running(book));
+    QCOMPARE(sprint.progress(103), 3);
+    sprint.observe(book, 105);
+    QVERIFY(sprint.complete(book));
+    QVERIFY(!sprint.running(book));
+    QCOMPARE(sprint.progress(105), 5);
+    sprint.observe(book, 96);
+    QVERIFY(sprint.complete(book));
+    QCOMPARE(sprint.progress(96), 5);
+    sprint.start(book, 96, 5);
+    QVERIFY(sprint.running(book));
+    QCOMPARE(sprint.progress(96), 0);
+}
+
+void WritingProgressTest::sprintCountReductionBeforeTargetKeepsSprintRunning()
+{
+    const QString book = QStringLiteral("book");
+    WritingSprint sprint;
+    sprint.start(book, 100, 5);
+    sprint.observe(book, 90);
+    QVERIFY(sprint.running(book));
+    QVERIFY(!sprint.complete(book));
+    QCOMPARE(sprint.progress(90), -10);
+}
+
+void WritingProgressTest::sprintCancelOnlyEndsRunningSprint()
+{
+    const QString book = QStringLiteral("book");
+    WritingSprint sprint;
+    sprint.start(book, 0, 5);
+    sprint.observe(book, 2);
+    sprint.cancel();
+    QVERIFY(!sprint.running(book));
+    QVERIFY(!sprint.complete(book));
+    sprint.start(book, 0, 5);
+    sprint.observe(book, 5);
+    QVERIFY(sprint.complete(book));
+    sprint.cancel();
+    QVERIFY(sprint.complete(book));
+}
+
+void WritingProgressTest::sprintIsScopedToItsBook()
+{
+    WritingSprint sprint;
+    sprint.start(QStringLiteral("a"), 0, 5);
+    sprint.observe(QStringLiteral("b"), 50);
+    QVERIFY(sprint.running(QStringLiteral("a")));
+    QVERIFY(!sprint.running(QStringLiteral("b")));
+    QVERIFY(!sprint.complete(QStringLiteral("a")));
+    QCOMPARE(sprint.target(), 5);
 }
 
 QTEST_GUILESS_MAIN(WritingProgressTest)

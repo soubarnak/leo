@@ -144,10 +144,7 @@ private:
     QLabel *progressCount_ = nullptr;
     QLabel *progressGoal_ = nullptr;
     std::unique_ptr<WritingProgress> progress_;
-    int sprintStart_ = 0;
-    int sprintTarget_ = 0;
-    bool sprintRunning_ = false;
-    QString sprintBookId_;
+    WritingSprint sprint_;
     QPlainTextEdit *chapterEditor_ = nullptr;
     QScrollArea *bookFlow_ = nullptr;
     QWidget *bookPages_ = nullptr;

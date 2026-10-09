@@ -7,7 +7,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QRegularExpression>
 #include <QTextDocument>
 
 namespace {
@@ -40,7 +39,7 @@ int WritingProgressSnapshot::todayWords() const
 
 WritingProgress::WritingProgress(QString libraryPath) : libraryPath_(std::move(libraryPath)) {}
 
-bool WritingProgress::load(const QString &bookId, QString *error)
+bool WritingProgress::load(const QString &bookId, QString *error, const QDateTime &now)
 {
     bookId_ = bookId;
     data_ = {};
@@ -71,7 +70,7 @@ bool WritingProgress::load(const QString &bookId, QString *error)
                                         nonnegative(item.value(QStringLiteral("end")))});
         }
     }
-    data_.day = writingDay(QDateTime::currentDateTime(), data_.dayEndsAt);
+    data_.day = resolveDay(now, data_.dayEndsAt);
     return true;
 }
 
@@ -81,12 +80,27 @@ QDate WritingProgress::writingDay(const QDateTime &now, int dayEndsAt)
     return local.time().hour() < dayEndsAt ? local.date().addDays(-1) : local.date();
 }
 
+QDate WritingProgress::resolveDay(const QDateTime &now, int dayEndsAt) const
+{
+    const QDate day = writingDay(now, dayEndsAt);
+    // A clock or timezone change can move the local date backwards. Keep counting on the
+    // last recorded day so one writing day never gains a second history entry.
+    return data_.history.isEmpty() ? day : qMax(day, data_.history.lastKey());
+}
+
 int WritingProgress::countWords(const QString &text)
 {
-    static const QRegularExpression words(QStringLiteral("\\S+"));
+    // QChar::isSpace covers U+00A0 and the U+2029 paragraph separator that a text cursor emits.
     int count = 0;
-    auto matches = words.globalMatch(text);
-    while (matches.hasNext()) { matches.next(); ++count; }
+    bool inWord = false;
+    for (const QChar ch : text) {
+        if (ch.isSpace()) {
+            inWord = false;
+        } else if (!inWord) {
+            inWord = true;
+            ++count;
+        }
+    }
     return count;
 }
 
@@ -117,9 +131,7 @@ int WritingProgress::countBook(const QString &libraryPath, const QString &bookId
 bool WritingProgress::updateCount(int count, const QDateTime &now, QString *error)
 {
     if (count < 0 || bookId_.isEmpty()) return false;
-    QDate day = writingDay(now, data_.dayEndsAt);
-    if (!data_.history.isEmpty() && day < data_.history.lastKey())
-        day = data_.history.lastKey();
+    const QDate day = resolveDay(now, data_.dayEndsAt);
     data_.day = day;
     if (!data_.history.contains(day))
         data_.history.insert(day, {data_.bookWords, count});
@@ -160,13 +172,56 @@ bool WritingProgress::setGoals(int dailyGoal, int bookGoal, int dayEndsAt, QStri
     data_.dailyGoal = dailyGoal;
     data_.bookGoal = bookGoal;
     data_.dayEndsAt = dayEndsAt;
-    data_.day = writingDay(QDateTime::currentDateTime(), dayEndsAt);
-    if (!data_.history.isEmpty() && data_.day < data_.history.lastKey())
-        data_.day = data_.history.lastKey();
+    data_.day = resolveDay(QDateTime::currentDateTime(), dayEndsAt);
     return true;
 }
 
 WritingProgressSnapshot WritingProgress::snapshot() const { return data_; }
+
+void WritingSprint::start(const QString &bookId, int bookWords, int target)
+{
+    phase_ = Phase::Running;
+    bookId_ = bookId;
+    startWords_ = bookWords;
+    target_ = target;
+    achieved_ = 0;
+}
+
+void WritingSprint::cancel()
+{
+    if (phase_ == Phase::Running) phase_ = Phase::Idle;
+}
+
+void WritingSprint::observe(const QString &bookId, int bookWords)
+{
+    if (phase_ != Phase::Running || bookId != bookId_) return;
+    if (bookWords - startWords_ >= target_) {
+        phase_ = Phase::Complete;
+        achieved_ = bookWords - startWords_;
+    }
+}
+
+void WritingSprint::reset()
+{
+    *this = WritingSprint();
+}
+
+bool WritingSprint::running(const QString &bookId) const
+{
+    return phase_ == Phase::Running && bookId == bookId_;
+}
+
+bool WritingSprint::complete(const QString &bookId) const
+{
+    return phase_ == Phase::Complete && bookId == bookId_;
+}
+
+int WritingSprint::target() const { return target_; }
+
+int WritingSprint::progress(int bookWords) const
+{
+    return phase_ == Phase::Complete ? achieved_ : bookWords - startWords_;
+}
 
 bool WritingProgress::saveBook(QString *error)
 {

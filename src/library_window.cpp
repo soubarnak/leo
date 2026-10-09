@@ -1699,8 +1699,7 @@ bool LibraryWindow::openLibrary(const QString &path)
 
     activeLibraryPath_ = result.library.path;
     progress_.reset();
-    sprintRunning_ = false;
-    sprintBookId_.clear();
+    sprint_.reset();
     planningRecords_.reset();
     planningBookId_.clear();
     organization_ = std::move(organization);
@@ -3981,15 +3980,13 @@ void LibraryWindow::refreshProgress()
         countLabel += QStringLiteral(" · %1 selected").arg(selectionCount);
     progressCount_->setText(countLabel);
     const WritingProgressSnapshot snapshot = progress_->snapshot();
-    if (sprintRunning_ && sprintBookId_ == activeBookId_) {
-        const int gained = total - sprintStart_;
-        if (gained >= sprintTarget_) {
-            progressGoal_->setText(QStringLiteral("Sprint complete: %1 / %2")
-                                       .arg(gained).arg(sprintTarget_));
-        } else {
-            progressGoal_->setText(QStringLiteral("Sprint %1 / %2")
-                                       .arg(gained).arg(sprintTarget_));
-        }
+    sprint_.observe(activeBookId_, total);
+    if (sprint_.complete(activeBookId_)) {
+        progressGoal_->setText(QStringLiteral("Sprint complete: %1 / %2")
+                                   .arg(sprint_.progress(total)).arg(sprint_.target()));
+    } else if (sprint_.running(activeBookId_)) {
+        progressGoal_->setText(QStringLiteral("Sprint %1 / %2")
+                                   .arg(sprint_.progress(total)).arg(sprint_.target()));
     } else {
         const int today = snapshot.todayWords() + total - snapshot.bookWords;
         progressGoal_->setText(snapshot.dailyGoal > 0
@@ -4089,25 +4086,21 @@ void LibraryWindow::showProgress()
     auto *target = new QSpinBox(&dialog);
     target->setObjectName(QStringLiteral("sprint-target"));
     target->setRange(1, 10000000);
-    target->setValue(sprintTarget_ > 0 ? sprintTarget_ : 500);
+    target->setValue(sprint_.target() > 0 ? sprint_.target() : 500);
     form->addRow(QStringLiteral("Sprint target (words)"), target);
     layout->addLayout(form);
-    const bool activeSprint = sprintRunning_ && sprintBookId_ == activeBookId_;
-    auto *sprintButton = new QPushButton(activeSprint
-        ? (total - sprintStart_ >= sprintTarget_ ? QStringLiteral("Start new sprint")
-                                               : QStringLiteral("Cancel sprint"))
-        : QStringLiteral("Start sprint"), &dialog);
+    sprint_.observe(activeBookId_, total);
+    QString sprintLabel = QStringLiteral("Start sprint");
+    if (sprint_.running(activeBookId_)) sprintLabel = QStringLiteral("Cancel sprint");
+    else if (sprint_.complete(activeBookId_)) sprintLabel = QStringLiteral("Start new sprint");
+    auto *sprintButton = new QPushButton(sprintLabel, &dialog);
     sprintButton->setObjectName(QStringLiteral("sprint-button"));
     connect(sprintButton, &QPushButton::clicked, &dialog, [this, target, total, sprintButton] {
-        if (sprintRunning_ && sprintBookId_ == activeBookId_ &&
-            total - sprintStart_ < sprintTarget_) {
-            sprintRunning_ = false;
+        if (sprint_.running(activeBookId_)) {
+            sprint_.cancel();
             sprintButton->setText(QStringLiteral("Start sprint"));
         } else {
-            sprintStart_ = total;
-            sprintTarget_ = target->value();
-            sprintBookId_ = activeBookId_;
-            sprintRunning_ = true;
+            sprint_.start(activeBookId_, total, target->value());
             sprintButton->setText(QStringLiteral("Cancel sprint"));
         }
         refreshProgress();

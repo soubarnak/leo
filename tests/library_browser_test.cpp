@@ -7,12 +7,16 @@
 #include <QAction>
 #include <QAbstractButton>
 #include <QClipboard>
+#include <QColor>
 #include <QComboBox>
+#include <QDate>
+#include <QDialog>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileDialog>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -28,6 +32,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QSpinBox>
 #include <QStatusBar>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -303,6 +308,45 @@ void openSingleChapter(LibraryWindow *window)
     tree->setCurrentItem(chapter);
     emit tree->itemActivated(chapter, 0);
     QApplication::processEvents();
+}
+
+// Runs the action inside the modal Goals & sprints dialog, then closes it with Done.
+void runProgressDialog(LibraryWindow *window, const std::function<void(QDialog *)> &action)
+{
+    QTimer::singleShot(0, [&action] {
+        auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!dialog) {
+            return;
+        }
+        action(dialog);
+        for (QPushButton *button : dialog->findChildren<QPushButton *>()) {
+            if (button->text() == QStringLiteral("Done")) {
+                button->click();
+            }
+        }
+    });
+    window->findChild<QPushButton *>("writing-progress-button")->click();
+}
+
+QString numberedWords(int count)
+{
+    QStringList words;
+    for (int i = 1; i <= count; ++i) {
+        words << QStringLiteral("w%1").arg(i);
+    }
+    return words.join(QLatin1Char(' '));
+}
+
+bool containsColor(const QImage &image, const QColor &color)
+{
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            if (image.pixelColor(x, y) == color) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 QAction *deviceHandoffAction(LibraryWindow *window)
@@ -2463,6 +2507,113 @@ private slots:
         for (QWidget *widget : pages->findChildren<QWidget *>(QRegularExpression("^chapter-page-(?!heading)"))) {
             QCOMPARE(widget->focusPolicy(), Qt::NoFocus);
         }
+    }
+
+    void writingProgressCountsSprintsAndChartMatchFixtureText()
+    {
+        const QByteArray metadata = QStringLiteral(R"json({
+  "id": "book-1",
+  "title": "First Title",
+  "author": "Ada",
+  "chapterOrder": ["chapter-a"],
+  "chapterTitles": { "chapter-a": "Arrival" },
+  "dailyCounts": { "%1": { "start": 0, "end": 4 } }
+})json").arg(QDate::currentDate().toString(Qt::ISODate)).toUtf8();
+        QTemporaryDir library = makeSingleChapterLibrary(
+            QByteArrayLiteral("<p>Alpha beta.</p><p>Gamma delta.</p>"),
+            QByteArrayLiteral("[]"), QByteArrayLiteral("[]"), metadata);
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        openSingleChapter(&window);
+        auto *editor = window.findChild<QPlainTextEdit *>("chapter-editor");
+        auto *count = window.findChild<QLabel *>("writing-word-count");
+        auto *goal = window.findChild<QLabel *>("writing-goal-count");
+        QVERIFY(editor);
+        QVERIFY(count);
+        QVERIFY(goal);
+        QCOMPARE(count->text(), QStringLiteral("4 book \u00B7 4 chapter"));
+        QCOMPARE(goal->text(), QStringLiteral("4 today"));
+
+        // A selection across two paragraphs must count both paragraphs.
+        editor->selectAll();
+        QCOMPARE(count->text(), QStringLiteral("4 book \u00B7 4 chapter \u00B7 4 selected"));
+        QTextCursor cursor = editor->textCursor();
+        cursor.clearSelection();
+        editor->setTextCursor(cursor);
+
+        QImage chartImage;
+        bool headerMatches = false;
+        runProgressDialog(&window, [&](QDialog *dialog) {
+            if (auto *chart = dialog->findChild<QWidget *>("writing-30-day-chart")) {
+                chartImage = chart->grab().toImage();
+            }
+            for (QLabel *label : dialog->findChildren<QLabel *>()) {
+                if (label->text() == QStringLiteral("4 words in book \u00B7 4 today")) {
+                    headerMatches = true;
+                }
+            }
+            if (auto *daily = dialog->findChild<QSpinBox *>("daily-goal")) daily->setValue(120);
+            if (auto *book = dialog->findChild<QSpinBox *>("book-goal")) book->setValue(1000);
+        });
+        QVERIFY(headerMatches);
+        QVERIFY2(containsColor(chartImage, QColor(QStringLiteral("#3d8a6a"))), "daily bars not drawn");
+        QVERIFY2(containsColor(chartImage, QColor(QStringLiteral("#c9a86a"))), "book total line not drawn");
+
+        QString startLabel;
+        QString runningLabel;
+        runProgressDialog(&window, [&](QDialog *dialog) {
+            dialog->findChild<QSpinBox *>("sprint-target")->setValue(5);
+            auto *button = dialog->findChild<QPushButton *>("sprint-button");
+            startLabel = button->text();
+            button->click();
+            runningLabel = button->text();
+        });
+        QCOMPARE(startLabel, QStringLiteral("Start sprint"));
+        QCOMPARE(runningLabel, QStringLiteral("Cancel sprint"));
+
+        editor->setPlainText(numberedWords(7));
+        QCOMPARE(goal->text(), QStringLiteral("Sprint 3 / 5"));
+        editor->setPlainText(numberedWords(9));
+        QCOMPARE(goal->text(), QStringLiteral("Sprint complete: 5 / 5"));
+        // Deleting words after completion must not undo the completed sprint.
+        editor->setPlainText(numberedWords(4));
+        QCOMPARE(goal->text(), QStringLiteral("Sprint complete: 5 / 5"));
+
+        QString completedLabel;
+        runProgressDialog(&window, [&](QDialog *dialog) {
+            auto *button = dialog->findChild<QPushButton *>("sprint-button");
+            completedLabel = button->text();
+            button->click();
+        });
+        QCOMPARE(completedLabel, QStringLiteral("Start new sprint"));
+        QCOMPARE(goal->text(), QStringLiteral("Sprint 0 / 5"));
+        editor->setPlainText(numberedWords(6));
+        QCOMPARE(goal->text(), QStringLiteral("Sprint 2 / 5"));
+        // Deleting below the sprint start point keeps the sprint running and shows the net count.
+        editor->setPlainText(numberedWords(3));
+        QCOMPARE(goal->text(), QStringLiteral("Sprint -1 / 5"));
+
+        QString cancelLabel;
+        runProgressDialog(&window, [&](QDialog *dialog) {
+            auto *button = dialog->findChild<QPushButton *>("sprint-button");
+            cancelLabel = button->text();
+            button->click();
+        });
+        QCOMPARE(cancelLabel, QStringLiteral("Cancel sprint"));
+        QCOMPARE(goal->text(), QStringLiteral("3 / 120 today"));
+
+        LibraryWindow reopened;
+        QVERIFY(reopened.openLibrary(library.path()));
+        openSingleChapter(&reopened);
+        int savedDailyGoal = -1;
+        int savedBookGoal = -1;
+        runProgressDialog(&reopened, [&](QDialog *dialog) {
+            savedDailyGoal = dialog->findChild<QSpinBox *>("daily-goal")->value();
+            savedBookGoal = dialog->findChild<QSpinBox *>("book-goal")->value();
+        });
+        QCOMPARE(savedDailyGoal, 120);
+        QCOMPARE(savedBookGoal, 1000);
     }
 
     void zoomInShortcutIsSpeakableAndKeepsStandardKey()
