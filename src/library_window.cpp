@@ -218,8 +218,9 @@ void addBook(QTreeWidgetItem *parent, const Book &book, bool hasOutline,
         outlineItem->setToolTip(0, QStringLiteral("Open the book outline"));
         outlineItem->setData(0, ItemKindRole, OutlineItemKind);
         outlineItem->setData(0, BookIdRole, book.id);
-        outlineItem->setFlags(outlineItem->flags() &
-                              ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
+        outlineItem->setFlags((outlineItem->flags() &
+                               ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled)) |
+                              Qt::ItemNeverHasChildren);
     }
 }
 

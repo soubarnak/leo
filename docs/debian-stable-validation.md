@@ -42,7 +42,7 @@ Orca 48.1, AT-SPI 2.56.2, Qt 6.8.2, xfwm4 4.20 on Xvfb 1280×800, `leo-writer` 0
 - Scaling: at 2× the window grew to 1624×776 and the page clipped; the Library tree elided book and chapter names to "F…" and "…". 1.5× fits but the Library column is still narrow.
 - Defects found by that run (all eight are addressed in code after 59ad74e): generic editor name without the chapter title; silent Tab stops on unnamed spacers; submenus (Page theme, Body typeface, Drop-cap style) not announced as submenus; "Zoom in" followed by a garbled shortcut; Find results tree has no accessible name; onboarding path field spoken only as "text"; window not clamped to the screen at 2×; leaf chapters announced as "expanded".
   - The first seven were fixed in 014c3a8 and are covered by `library_browser_test` (window clamp, editor/Find/onboarding names, preference notice in the status bar and editor description, non-focusable page fillers, View submenus, Ctrl+= for Zoom in).
-  - Leaf chapters were reported as expanded through Qt's accessibility tree. Chapter items now carry `Qt::ItemNeverHasChildren`, and `leafChapterIsNotReportedAsExpanded` checks the chapter's accessible state.
+  - Leaf chapters and the Outline row were reported as expanded through Qt's accessibility tree. Both items now carry `Qt::ItemNeverHasChildren`, and `leafChapterIsNotReportedAsExpanded` and `outlineLeafIsNotReportedAsExpanded` check their accessible state.
 - These fixes are verified by automated tests only. They have not been re-run under Orca, so the scripted pass above does not show their effect with a screen reader. The human pass is still to be recorded in `docs/manual/issue-27-writing-presentation.md`.
 
 ## Not covered

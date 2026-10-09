@@ -2320,6 +2320,36 @@ private slots:
         QVERIFY2(!chapter->isExpanded(), "leaf chapter item is marked expanded");
     }
 
+    void outlineLeafIsNotReportedAsExpanded()
+    {
+        QTemporaryDir library = makeNeoLibrary(QByteArrayLiteral("<p>Opening line.</p>"),
+                                               QByteArrayLiteral("[]"),
+                                               QByteArrayLiteral("[]"));
+        QVERIFY(library.isValid());
+        LibraryWindow window;
+        QVERIFY(window.openLibrary(library.path()));
+        window.show();
+        QApplication::processEvents();
+        auto *tree = window.findChild<QTreeWidget *>("library-tree");
+        QVERIFY(tree);
+        QTreeWidgetItem *outline = nullptr;
+        for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+            if ((*it)->text(0) == QStringLiteral("Outline")) {
+                outline = *it;
+                break;
+            }
+        }
+        QVERIFY2(outline, "Outline row is missing from the Library tree");
+
+        QAccessibleInterface *treeAccessible = QAccessible::queryAccessibleInterface(tree);
+        QVERIFY(treeAccessible);
+        QAccessibleInterface *outlineAccessible =
+            findAccessibleNamed(treeAccessible, QStringLiteral("Outline"));
+        QVERIFY2(outlineAccessible, "Outline row is missing from the accessibility tree");
+        QVERIFY2(!outlineAccessible->state().expandable, "Outline row reported as expandable");
+        QVERIFY2(!outlineAccessible->state().expanded, "Outline row reported as expanded");
+    }
+
     void libraryTreeKeepsNamesReadableAtLargeFontSizes()
     {
         QTemporaryDir library = makeLibrary();
