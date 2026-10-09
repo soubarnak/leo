@@ -107,10 +107,12 @@ void EmailSnapshotTest::snapshotIsVerifiable() {
     // Independent recomputation must match the reported fingerprint and the sha256sum sidecar.
     QCOMPARE(QString::fromLatin1(sha256HexOf(result.textPath)), result.fingerprint);
     QVERIFY(result.fingerprint.size() == 64);
+    // The PDF that gets attached is digested too, so the attachment itself can be verified.
     QFile sidecar(result.fingerprintPath);
     QVERIFY(sidecar.open(QIODevice::ReadOnly));
     QCOMPARE(QString::fromUtf8(sidecar.readAll()),
-             result.fingerprint + QStringLiteral("  ") + QFileInfo(result.textPath).fileName() + QStringLiteral("\n"));
+             result.fingerprint + QStringLiteral("  ") + QFileInfo(result.textPath).fileName() + QStringLiteral("\n")
+                 + QString::fromLatin1(sha256HexOf(result.pdfPath)) + QStringLiteral("  ") + QFileInfo(result.pdfPath).fileName() + QStringLiteral("\n"));
 
     // Draft text must not claim the mail was sent.
     QVERIFY(!EmailSnapshot::draftMessage(result).body.contains(QStringLiteral("sent"), Qt::CaseInsensitive));

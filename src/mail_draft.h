@@ -8,7 +8,7 @@
 
 // Opening a mail draft never sends mail. There is deliberately no "Sent" status.
 enum class DraftStatus {
-    // Desktop mail client asked to compose with the attachment. The client confirms the attachment, not Leo.
+    // Desktop mail client was asked to compose with the attachment. Leo cannot verify that the attachment was added.
     Opened,
     // Compose window opened (or mailto fallback) without the attachment; the writer attaches the file by hand.
     OpenedWithoutAttachment,

@@ -2010,7 +2010,7 @@ void LibraryWindow::emailSnapshot(const QString &bookId, bool gmail)
         return;
     }
     if (draft.status == DraftStatus::Opened)
-        statusBar()->showMessage(QStringLiteral("Mail draft opened with %1 attached. Review it before sending.").arg(fileName), 8000);
+        statusBar()->showMessage(QStringLiteral("Mail app opened. Check that %1 is attached before sending.").arg(fileName), 8000);
     else
         statusBar()->showMessage(QStringLiteral("Mail draft opened. Attach %1 if your mail app did not.").arg(fileName), 8000);
 }

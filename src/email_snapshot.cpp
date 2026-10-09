@@ -35,9 +35,17 @@ SnapshotResult failed(const QString &error)
     return result;
 }
 
-void removeAll(const QStringList &paths)
+void removeFiles(const QStringList &paths)
 {
     for (const auto &path : paths) QFile::remove(path);
+}
+
+bool readWholeFile(const QString &path, QByteArray *bytes)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    *bytes = file.readAll();
+    return !bytes->isEmpty();
 }
 
 } // namespace
@@ -72,31 +80,32 @@ SnapshotResult EmailSnapshot::create(const QString &libraryPath, const QString &
         return failed(QStringLiteral("A snapshot with this timestamp already exists. Wait a second and try again."));
     if (!QDir().mkpath(folder)) return failed(QStringLiteral("Could not create the snapshot folder."));
 
-    // PDF first. ManuscriptExport writes atomically, so a failure leaves no PDF behind.
+    // PDF first. ManuscriptExport writes atomically, so a failed PDF leaves no PDF behind (the empty folder may remain).
     const auto pdf = ManuscriptExport::write(libraryPath, bookId, ManuscriptFormat::Pdf, result.pdfPath);
     if (!pdf.ok) return failed(pdf.error);
 
     const auto text = ManuscriptExport::write(libraryPath, bookId, ManuscriptFormat::Text, result.textPath);
     if (!text.ok) {
-        removeAll({result.pdfPath});
+        removeFiles({result.pdfPath});
         return failed(text.error);
     }
 
-    QFile textFile(result.textPath);
-    QByteArray textBytes;
-    if (!textFile.open(QIODevice::ReadOnly)) {
-        removeAll({result.pdfPath, result.textPath});
-        return failed(QStringLiteral("Could not read the text export for the fingerprint."));
+    // Digest the files as written, so the sidecar describes exactly what the writer will attach and verify.
+    QByteArray textBytes, pdfBytes;
+    if (!readWholeFile(result.textPath, &textBytes) || !readWholeFile(result.pdfPath, &pdfBytes)) {
+        removeFiles({result.pdfPath, result.textPath});
+        return failed(QStringLiteral("Could not read the snapshot back to fingerprint it."));
     }
-    textBytes = textFile.readAll();
     result.fingerprint = QString::fromLatin1(LibraryPersistence::hash(textBytes));
+    const QString pdfDigest = QString::fromLatin1(LibraryPersistence::hash(pdfBytes));
 
-    // sha256sum format, so `sha256sum -c <name>.sha256` verifies the text file in the same folder.
-    const QByteArray sidecar = (result.fingerprint + QStringLiteral("  ") + QFileInfo(result.textPath).fileName() + QStringLiteral("\n")).toUtf8();
+    // sha256sum format: `sha256sum -c <name>.sha256` verifies both files from the snapshot folder.
+    const QByteArray sidecar = (result.fingerprint + QStringLiteral("  ") + QFileInfo(result.textPath).fileName() + QStringLiteral("\n")
+                                + pdfDigest + QStringLiteral("  ") + QFileInfo(result.pdfPath).fileName() + QStringLiteral("\n")).toUtf8();
     QSaveFile saved(result.fingerprintPath);
     saved.setDirectWriteFallback(false);
     if (!saved.open(QIODevice::WriteOnly) || saved.write(sidecar) != sidecar.size() || !saved.commit()) {
-        removeAll({result.pdfPath, result.textPath});
+        removeFiles({result.pdfPath, result.textPath});
         return failed(QStringLiteral("Could not save the fingerprint file."));
     }
 

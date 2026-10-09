@@ -12,7 +12,7 @@ struct SnapshotResult {
     QString stamp;          // UTC, yyyyMMdd'T'HHmmss'Z'
     QString pdfPath;
     QString textPath;       // plain-text export that the fingerprint covers
-    QString fingerprintPath; // sha256sum-format sidecar naming textPath
+    QString fingerprintPath; // sha256sum-format sidecar: digests of textPath and pdfPath
     QString fingerprint;    // lowercase hex SHA-256 of the text export bytes
 };
 
