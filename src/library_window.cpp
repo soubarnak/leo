@@ -13,6 +13,8 @@
 #include "spellcheck.h"
 #include "chapter_links.h"
 #include "darling_records.h"
+#include "email_snapshot.h"
+#include "mail_draft.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -57,6 +59,7 @@
 #include <QMimeData>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -1980,6 +1983,38 @@ void LibraryWindow::manageAuthor(const QString &authorId, const QPoint &globalPo
                              QStringLiteral("Pen name removed; its books were kept."));
 }
 
+void LibraryWindow::emailSnapshot(const QString &bookId, bool gmail)
+{
+    if (!saveCurrentChapter()) return;
+    const QString documents = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    const QString folder = QDir(documents.isEmpty() ? QDir::home().filePath(QStringLiteral("Documents")) : documents)
+                               .filePath(QStringLiteral("Leo Snapshots/%1").arg(QFileInfo(activeLibraryPath_).fileName()));
+    const SnapshotResult snapshot = EmailSnapshot::create(activeLibraryPath_, bookId, folder, QDateTime::currentDateTimeUtc());
+    if (!snapshot.ok) {
+        QMessageBox::warning(this, QStringLiteral("Email snapshot failed"), snapshot.error);
+        return;
+    }
+    const DraftMessage message = EmailSnapshot::draftMessage(snapshot);
+    const DraftUrlOpener open = [](const QUrl &url) { return QDesktopServices::openUrl(url); };
+    const DraftResult draft = gmail
+        ? MailDraft::openGmailDraft(message, open)
+        : MailDraft::openDesktopDraft(message,
+                                      [](const QString &program, const QStringList &arguments) {
+                                          return QProcess::startDetached(program, arguments);
+                                      },
+                                      open);
+    const QString fileName = QFileInfo(snapshot.pdfPath).fileName();
+    if (draft.status == DraftStatus::Failed) {
+        QMessageBox::warning(this, QStringLiteral("Mail draft not opened"),
+                             QStringLiteral("Snapshot saved as %1.\n%2").arg(fileName, draft.error));
+        return;
+    }
+    if (draft.status == DraftStatus::Opened)
+        statusBar()->showMessage(QStringLiteral("Mail draft opened with %1 attached. Review it before sending.").arg(fileName), 8000);
+    else
+        statusBar()->showMessage(QStringLiteral("Mail draft opened. Attach %1 if your mail app did not.").arg(fileName), 8000);
+}
+
 void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
 {
     if (!organization_) {
@@ -2082,6 +2117,9 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
     QAction *exportDocx = exports->addAction(QStringLiteral("Word document…"));
     QAction *exportEpub = exports->addAction(QStringLiteral("EPUB book…"));
     QAction *exportPdf = exports->addAction(QStringLiteral("PDF book…"));
+    QMenu *snapshotMenu = menu.addMenu(QStringLiteral("Email snapshot"));
+    QAction *snapshotGmail = snapshotMenu->addAction(QStringLiteral("Gmail compose…"));
+    QAction *snapshotDesktop = snapshotMenu->addAction(QStringLiteral("Desktop mail draft…"));
     QMenu *covers = menu.addMenu(QStringLiteral("Cover"));
     QAction *importCover = covers->addAction(QStringLiteral("Import image…"));
     QAction *showImage = covers->addAction(QStringLiteral("Show imported image"));
@@ -2107,6 +2145,10 @@ void LibraryWindow::showOrganizationContextMenu(const QPoint &position)
         const auto result = ManuscriptExport::write(activeLibraryPath_, bookId, format, destination);
         if (!result.ok) QMessageBox::warning(this, QStringLiteral("Export failed"), result.error);
         else statusBar()->showMessage(QStringLiteral("Manuscript exported."), 5000);
+        return;
+    }
+    if (chosen == snapshotGmail || chosen == snapshotDesktop) {
+        emailSnapshot(bookId, chosen == snapshotGmail);
         return;
     }
     if (chosen == saveApiKey) {

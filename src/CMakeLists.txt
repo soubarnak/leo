@@ -13,7 +13,9 @@ add_library(leo_library_browser STATIC
   chapter_structure.cpp
   chapter_links.cpp
   darling_records.cpp
+  email_snapshot.cpp
   font_preferences.cpp
+  mail_draft.cpp
   legacy_chapter_codec.cpp
   manuscript_import.cpp
   manuscript_export.cpp

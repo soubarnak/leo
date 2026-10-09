@@ -105,6 +105,7 @@ private:
     void updatePresentation();
     bool saveCurrentChapter();
     bool savePendingEdits();
+    void emailSnapshot(const QString &bookId, bool gmail);
     void saveRepairCopy();
     void switchToRecoveredLibrary();
     void updateEditorState(const QString &message = QString());

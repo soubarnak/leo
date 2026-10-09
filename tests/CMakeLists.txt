@@ -79,6 +79,11 @@ target_compile_definitions(leo-manuscript-export-test PRIVATE EPUB_READER_SCRIPT
 target_compile_definitions(leo-manuscript-export-test PRIVATE PDF_READER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/pdf_reader_check.py")
 target_compile_definitions(leo-manuscript-export-test PRIVATE PDF_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/pdf")
 
+add_executable(leo-email-snapshot-test email_snapshot_test.cpp)
+target_link_libraries(leo-email-snapshot-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
+add_test(NAME leo-email-snapshot COMMAND leo-email-snapshot-test)
+set_tests_properties(leo-email-snapshot PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # Each test gets private XDG directories so tests that persist app state cannot collide when ctest runs in parallel.
 get_property(leo_all_tests DIRECTORY PROPERTY TESTS)
 foreach(leo_test IN LISTS leo_all_tests)
