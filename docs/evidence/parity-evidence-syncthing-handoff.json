@@ -1,0 +1,12 @@
+{
+  "commit": "3aed314ba0bd63be475399618498bc1ad6a8aa7a",
+  "debian_version": "Debian GNU/Linux 13 (trixie)",
+  "kind": "script",
+  "log_excerpt": "ok: synced (initial desktop -> phone)\nok: synced (desktop edit -> phone)\nok: synced (phone edit -> desktop)\nok: synced (desktop edit -> phone (round trip))\nhandoff assertions passed\nhandoff assertions passed\nPASS: LEO/NEO desktop <-> Pocket phone handoff over real Syncthing\nSCRIPT-EXIT:0",
+  "name": "tests/handoff/syncthing_handoff.sh",
+  "os_id": "debian",
+  "os_pretty": "Debian GNU/Linux 13 (trixie)",
+  "recorded_at": "2026-10-12T17:13:22Z",
+  "result": "pass",
+  "tree_clean": false
+}

@@ -72,6 +72,10 @@ It is opt-in so default `ctest` stays fast and offline. Run it directly with
 (skipped) if podman, node, or the image is unavailable. Set
 `LEO_SYNCTHING_IMAGE` to use a different image.
 
+Recorded run (2026-10-12, leo `3aed314`): passed inside a clean Debian GNU/Linux
+13 (trixie) container with nested rootless podman (two Syncthing containers on a
+private network), recorded as `docs/evidence/parity-evidence-syncthing-handoff.json`.
+
 This proves real Syncthing synchronization and Pocket's bridge code against
 synced files. It does **not** run the Android app, its WebView, Capacitor's
 native filesystem plugin (a node `fs` mock stands in), Android permissions, or
@@ -113,6 +117,12 @@ script downloads the pinned static release into the cache.
 Recorded run (2026-10-01, leo `c7179e3` plus the uncommitted changes that added
 this test): passed on an emulated Android 15 (API 35), WebView 124.0.6367.219,
 Syncthing for Android 1.28.1, desktop Syncthing v2.1.5, Pocket debug build.
+
+Recorded run (2026-10-12, leo `3aed314`): passed again on Debian GNU/Linux 13
+(trixie) in a KVM-enabled container with nested rootless podman: Android 15
+(API 35), WebView 124.0.6367.219, Syncthing for Android 1.28.1, desktop
+Syncthing v2.1.6, Pocket debug build, recorded as
+`docs/evidence/parity-evidence-android-handoff.json`.
 
 What the real editor does to a Library (all asserted, none lost): Pocket adds
 `authors` and `hintShown` to `library.json` and `chapterNotes`, `wordCount` and
