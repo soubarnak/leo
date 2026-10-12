@@ -13,8 +13,10 @@
 #     --output-dir DIR    write ctest-junit.xml and os-release there for
 #                         scripts/record_parity_evidence.py (default: none)
 #     --worktree          build the current working tree instead of HEAD
-#                         (for trial runs before a commit; requires .git of
-#                         the host checkout for --previous-ref)
+#                         (for trial runs before a commit; carries the
+#                         checkout's .git so the parity checker can resolve
+#                         the build commits the matrix cites, and uses it
+#                         for --previous-ref)
 #     --podman            re-execute inside a clean debian:trixie-slim
 #                         container with podman (local use)
 #
@@ -100,17 +102,24 @@ work=$(mktemp -d)
 printf '== preparing source trees in %s ==\n' "$work"
 mkdir -p "$work/cur"
 if [ "$worktree" -eq 1 ]; then
-  # Trial mode: snapshot the working tree (including uncommitted work).
+  # Trial mode: snapshot the working tree (including uncommitted work) and
+  # carry its .git along: the parity checker inside dh_auto_test must
+  # resolve the build commits the matrix cites, and a git-less snapshot
+  # would make every pass row fail as an unknown commit.
   tar -C "$repo_dir" \
     --exclude=./.git --exclude=./build --exclude=./node_modules \
     --exclude=./.commandcode --exclude=./.pi --exclude=./'Claude outputs' \
     -cf - . | tar -xf - -C "$work/cur"
+  cp -a "$repo_dir/.git" "$work/cur/.git"
 else
   git clone -q "$repo_dir" "$work/cur"
-  # debhelper drops untracked build files (debian/files, obj-*); the parity
-  # checker verifies tracked build paths against the build commit instead.
-  git -C "$work/cur" config status.showUntrackedFiles no
 fi
+# debhelper drops untracked build files (debian/files, obj-*); the parity
+# checker verifies tracked build paths against the build commit instead.
+# The copied .git may keep a foreign owner after cp -a, so trust the tree
+# before any git command touches it.
+git config --global --add safe.directory "$work/cur"
+git -C "$work/cur" config status.showUntrackedFiles no
 version=$(sed -n '1s/^[^ ]* (\([^)]*\)).*/\1/p' "$work/cur/debian/changelog")
 printf '== building leo-writer %s ==\n' "$version"
 (cd "$work/cur" && dpkg-buildpackage -us -uc -b)
