@@ -40,7 +40,7 @@ add_test(NAME leo-writer-package-identity
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/package_identity_test.sh
           $<TARGET_FILE:leo-writer>
           ${CMAKE_SOURCE_DIR}/resources/io.github.soubarnak.LeoWriter.desktop
-          ${PROJECT_VERSION})
+          ${LEO_VERSION_STRING})
 
 add_executable(leo-writer-runtime-test application_runtime_test.cpp)
 target_link_libraries(leo-writer-runtime-test PRIVATE leo_library_browser Qt6::Test Qt6::Core)
@@ -88,6 +88,20 @@ add_executable(leo-library-snapshot-test library_snapshot_test.cpp)
 target_link_libraries(leo-library-snapshot-test PRIVATE leo_library_browser Qt6::Test Qt6::Widgets)
 add_test(NAME leo-library-snapshot COMMAND leo-library-snapshot-test)
 set_tests_properties(leo-library-snapshot PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Stable-release parity verification (#39): the checker validates
+# docs/parity-matrix.md against recorded evidence; the tooling unit tests
+# cover the checker and the evidence recorder. All need python3.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME leo-parity-matrix
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_parity_matrix.py
+            --repo-root ${CMAKE_SOURCE_DIR})
+  add_test(NAME leo-parity-matrix-tooling
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test_check_parity_matrix.py)
+  add_test(NAME leo-parity-evidence-tooling
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test_record_parity_evidence.py)
+endif()
 
 # Each test gets private XDG directories so tests that persist app state cannot collide when ctest runs in parallel.
 get_property(leo_all_tests DIRECTORY PROPERTY TESTS)

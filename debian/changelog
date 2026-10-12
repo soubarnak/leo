@@ -1,3 +1,10 @@
+leo-writer (0.2.0+preview) unstable; urgency=medium
+
+  * Label this build as a preview while the stable-release parity matrix
+    still reports pending verification rows (#39).
+
+ -- LEO maintainers <leo-writer@users.noreply.github.com>  Mon, 12 Oct 2026 21:12:30 +0530
+
 leo-writer (0.2.0) unstable; urgency=medium
 
   * Add native Debian identity and GitHub release checks.

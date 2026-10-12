@@ -87,10 +87,22 @@ void ReleaseCheckDialog::finishCheck(QNetworkReply *reply)
 
     qsizetype latestSuffix = 0;
     qsizetype currentSuffix = 0;
+    // Preview and Debian package versions may carry a suffix such as
+    // "+preview"; compare releases on their numeric base version so a
+    // preview build is not rejected as an invalid release version.
+    QString comparableCurrent = currentVersion_;
+    for (qsizetype index = 0; index < comparableCurrent.size(); ++index) {
+        const QChar character = comparableCurrent.at(index);
+        if (character == QLatin1Char('+') || character == QLatin1Char('~') ||
+            (character != QLatin1Char('.') && !character.isDigit())) {
+            comparableCurrent.truncate(index);
+            break;
+        }
+    }
     const QVersionNumber latest = QVersionNumber::fromString(latestVersion, &latestSuffix);
-    const QVersionNumber current = QVersionNumber::fromString(currentVersion_, &currentSuffix);
+    const QVersionNumber current = QVersionNumber::fromString(comparableCurrent, &currentSuffix);
     if (parseError.error != QJsonParseError::NoError || latest.isNull() || current.isNull() ||
-        latestSuffix != latestVersion.size() || currentSuffix != currentVersion_.size()) {
+        latestSuffix != latestVersion.size() || currentSuffix != comparableCurrent.size()) {
         status_->setText(QStringLiteral(
             "GitHub returned an invalid release version. Debian packages receive updates through APT."));
         reply->deleteLater();

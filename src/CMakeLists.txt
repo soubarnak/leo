@@ -40,6 +40,6 @@ target_compile_options(leo_library_browser PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(leo-writer main.cpp)
 target_link_libraries(leo-writer PRIVATE leo_library_browser)
-target_compile_definitions(leo-writer PRIVATE LEO_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(leo-writer PRIVATE LEO_VERSION="${LEO_VERSION_STRING}")
 target_compile_options(leo-writer PRIVATE -Wall -Wextra -Wpedantic)
 install(TARGETS leo-writer RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

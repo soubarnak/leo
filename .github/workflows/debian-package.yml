@@ -59,43 +59,11 @@ jobs:
           echo "current=$current_version" >> "$GITHUB_OUTPUT"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
-      - name: Install Debian build and package tools
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential cmake debhelper desktop-file-utils fakeroot \
-            libwww-dict-leo-org-perl qt6-base-dev qt6-qpa-plugins
-
-      - name: Build current Debian package
-        env:
-          CURRENT_VERSION: ${{ steps.versions.outputs.current }}
+      - name: Run Debian release drill (build, full test suite, APT lifecycle)
         run: |
           set -eu
-          workspace="$RUNNER_TEMP/leo-package-lifecycle"
-          mkdir -p "$workspace/current"
-          git archive HEAD | tar -x -C "$workspace/current"
-          (cd "$workspace/current" && dpkg-buildpackage -us -uc -b)
-          test -f "$workspace/leo-writer_${CURRENT_VERSION}_amd64.deb"
-
-      - name: Build previous Debian package
-        if: steps.versions.outputs.changed == 'true'
-        env:
-          PREVIOUS_VERSION: ${{ steps.versions.outputs.previous }}
-          PREVIOUS_REF: ${{ steps.versions.outputs.previous_ref }}
-        run: |
-          set -eu
-          workspace="$RUNNER_TEMP/leo-package-lifecycle"
-          mkdir -p "$workspace/previous"
-          git archive "$PREVIOUS_REF" | tar -x -C "$workspace/previous"
-          (cd "$workspace/previous" && dpkg-buildpackage -us -uc -b)
-          test -f "$workspace/leo-writer_${PREVIOUS_VERSION}_amd64.deb"
-
-      - name: Verify clean install, APT upgrade, removal, and reinstall
-        if: steps.versions.outputs.changed == 'true'
-        env:
-          PREVIOUS_VERSION: ${{ steps.versions.outputs.previous }}
-          CURRENT_VERSION: ${{ steps.versions.outputs.current }}
-        run: |
-          LEO_PACKAGE_TEST_SANDBOX=1 sh tests/debian_package_lifecycle.sh \
-            "$RUNNER_TEMP/leo-package-lifecycle/leo-writer_${PREVIOUS_VERSION}_amd64.deb" \
-            "$RUNNER_TEMP/leo-package-lifecycle/leo-writer_${CURRENT_VERSION}_amd64.deb"
+          args="--repo-dir $GITHUB_WORKSPACE"
+          if [ "${{ steps.versions.outputs.changed }}" = "true" ]; then
+            args="$args --previous-ref ${{ steps.versions.outputs.previous_ref }}"
+          fi
+          sh scripts/debian_release_drill.sh $args

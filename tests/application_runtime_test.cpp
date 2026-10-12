@@ -219,6 +219,21 @@ private slots:
         QVERIFY(status->text().contains(QStringLiteral("through APT")));
     }
 
+    void releaseCheckTreatsPreviewVersionAsItsBase()
+    {
+        // Preview packages report "0.2.0+preview"; the release check must
+        // compare them on their numeric base version, not reject them as
+        // an invalid release version.
+        StubNetworkAccessManager network(QByteArrayLiteral("{\"tag_name\":\"v0.2.1\"}"));
+        ReleaseCheckDialog dialog(QStringLiteral("0.2.0+preview"), nullptr, &network);
+        dialog.show();
+        auto *status = dialog.findChild<QLabel *>(QStringLiteral("release-check-status"));
+        QVERIFY(status);
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("LEO 0.2.1 is available")),
+                                 5000);
+        QVERIFY(!status->text().contains(QStringLiteral("invalid release version")));
+    }
+
     void secondLaunchReusesRunningInstance()
     {
         QTemporaryDir temporary;
