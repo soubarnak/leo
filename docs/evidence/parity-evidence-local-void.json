@@ -1,11 +1,11 @@
 {
-  "command": "ctest --test-dir build -j --output-on-failure -E '^leo-parity-matrix$' --output-junit /home/soubarna/.cache/tmp/tmpv1t545xn.xml",
-  "commit": "28988052ef14307c616568efcf3d3e3482138bf9",
+  "command": "ctest --test-dir build -j --output-on-failure -E '^leo-parity-matrix$' --output-junit /home/soubarna/.cache/tmp/tmpj2kwnw_i.xml",
+  "commit": "9c25274e60d3cbf11fd18d9c73cfae4ed28caa31",
   "debian_version": null,
   "kind": "ctest-run",
   "os_id": "void",
   "os_pretty": "Void Linux",
-  "recorded_at": "2026-10-12T16:07:32Z",
+  "recorded_at": "2026-10-12T16:44:31Z",
   "tests": {
     "leo-book-covers": "pass",
     "leo-book-search-spellcheck": "pass",
