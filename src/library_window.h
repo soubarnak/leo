@@ -4,6 +4,8 @@
 #include <QByteArray>
 #include <QPoint>
 
+#include <QStringList>
+
 #include <memory>
 
 #include "chapter_structure.h"
@@ -108,6 +110,11 @@ private:
     void emailSnapshot(const QString &bookId, bool gmail);
     void saveRepairCopy();
     void switchToRecoveredLibrary();
+    void runDailySnapshot();
+    void startDriveMirror();
+    void refreshSnapshotNotice();
+    void clearSnapshotNotice();
+    void restoreSnapshot();
     void updateEditorState(const QString &message = QString());
     void showProgress();
     void refreshProgress();
@@ -124,6 +131,12 @@ private:
     QComboBox *onboardingBodyFont_ = nullptr;
     QComboBox *onboardingDropCap_ = nullptr;
     QLabel *recoveryNotice_ = nullptr;
+    QLabel *snapshotNotice_ = nullptr;
+    QTimer *snapshotTimer_ = nullptr;
+    bool restoreInProgress_ = false;
+    bool driveMirrorBusy_ = false;
+    QStringList snapshotLocalProblems_;
+    QString snapshotDriveProblem_;
     QPushButton *openRecoveredLibraryButton_ = nullptr;
     QPushButton *openRecoveredFromRefusalButton_ = nullptr;
     QWidget *libraryPage_ = nullptr;

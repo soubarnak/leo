@@ -9,6 +9,7 @@
 #include "library_creator.h"
 #include "library_persistence.h"
 #include "library_reader.h"
+#include "library_snapshot.h"
 #include "release_check_dialog.h"
 #include "spellcheck.h"
 #include "chapter_links.h"
@@ -79,6 +80,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextDocumentFragment>
+#include <QThread>
 #include <QTimer>
 #include <QListWidget>
 #include <QTreeWidget>
@@ -1215,6 +1217,13 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     saveTimer_->setSingleShot(true);
     saveTimer_->setInterval(800);
     connect(saveTimer_, &QTimer::timeout, this, [this] { saveCurrentChapter(); });
+
+    // Long sessions cross UTC midnight. Each tick hashes the whole Library on the GUI thread
+    // (even when nothing changed), so the interval is long.
+    snapshotTimer_ = new QTimer(this);
+    snapshotTimer_->setInterval(10 * 60 * 1000);
+    connect(snapshotTimer_, &QTimer::timeout, this, &LibraryWindow::runDailySnapshot);
+    snapshotTimer_->start();
     connect(chapterEditor_, &QPlainTextEdit::selectionChanged,
             this, &LibraryWindow::refreshProgress);
     connect(chapterEditor_, &QPlainTextEdit::textChanged, this, [this] {
@@ -1270,6 +1279,11 @@ LibraryWindow::LibraryWindow(QWidget *parent)
     setCentralWidget(centralPage);
     pages_->setCurrentWidget(welcomePage_);
     statusBar()->showMessage(QStringLiteral("No Library open"));
+    snapshotNotice_ = new QLabel(this);
+    snapshotNotice_->setObjectName(QStringLiteral("library-snapshot-notice"));
+    snapshotNotice_->setWordWrap(false);
+    snapshotNotice_->hide();
+    statusBar()->addPermanentWidget(snapshotNotice_);
 
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     QAction *openAction = fileMenu->addAction(QStringLiteral("&Open Library…"));
@@ -1320,6 +1334,8 @@ LibraryWindow::LibraryWindow(QWidget *parent)
             close();
         }
     });
+    QAction *restoreSnapshotAction = fileMenu->addAction(QStringLiteral("Restore snapshot…"));
+    connect(restoreSnapshotAction, &QAction::triggered, this, &LibraryWindow::restoreSnapshot);
     fileMenu->addSeparator();
     QAction *quitAction = fileMenu->addAction(QStringLiteral("E&xit"));
     quitAction->setShortcut(QKeySequence::Quit);
@@ -1629,6 +1645,7 @@ bool LibraryWindow::openLibrary(const QString &path)
     }
     organization_.reset();
     activeLibraryPath_.clear();
+    clearSnapshotNotice();
     if (canonicalOrCleanPath(path) != canonicalOrCleanPath(recoveredLibraryPath_)) {
         recoveredLibraryPath_.clear();
         openRecoveredLibraryButton_->hide();
@@ -1644,6 +1661,7 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!recovery.ok) {
         qWarning().noquote() << "Library save recovery paused:" << recovery.error;
         activeLibraryPath_.clear();
+        clearSnapshotNotice();
         const QString recoveredMessage = recovery.recovered
             ? QStringLiteral("LEO recovered an earlier interrupted save, then paused this Library.")
             : QStringLiteral("LEO paused this Library while recovering an interrupted save.");
@@ -1659,6 +1677,7 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!beforeOrganizationRecovery.ok()) {
         qWarning().noquote() << "Library open refused:" << beforeOrganizationRecovery.error;
         activeLibraryPath_.clear();
+        clearSnapshotNotice();
         refusal_->setText(QStringLiteral(
             "LEO refused to open this Library. It made no Library changes.\n\n%1\n\n%2")
                               .arg(beforeOrganizationRecovery.error, deviceHandoffGuidance()));
@@ -1673,6 +1692,7 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!organization->load(&organizationError)) {
         qWarning().noquote() << "Library organization recovery paused:" << organizationError;
         activeLibraryPath_.clear();
+        clearSnapshotNotice();
         refusal_->setText(QStringLiteral(
             "LEO could not recover or prepare safe Library organization changes. It made no "
             "partial Library change.\n\n%1\n\n%2")
@@ -1686,6 +1706,7 @@ bool LibraryWindow::openLibrary(const QString &path)
     if (!result.ok()) {
         qWarning().noquote() << "Library open refused:" << result.error;
         activeLibraryPath_.clear();
+        clearSnapshotNotice();
         refusal_->setText(QStringLiteral(
             "LEO refused to open this Library. It made no Library changes.\n\n%1\n\n%2")
                               .arg(result.error, deviceHandoffGuidance()));
@@ -1701,6 +1722,8 @@ bool LibraryWindow::openLibrary(const QString &path)
     }
 
     activeLibraryPath_ = result.library.path;
+    // A snapshot notice belongs to the previous Library; runDailySnapshot re-evaluates this one.
+    clearSnapshotNotice();
     progress_.reset();
     sprint_.reset();
     planningRecords_.reset();
@@ -1717,6 +1740,7 @@ bool LibraryWindow::openLibrary(const QString &path)
         status += QStringLiteral(" — ") + preferenceNotice_;
     }
     statusBar()->showMessage(status);
+    runDailySnapshot();
 
     if (!result.library.preferences.initialBookId.isEmpty()) {
         QTreeWidgetItem *initialBook = nullptr;
@@ -3980,7 +4004,192 @@ void LibraryWindow::closeEvent(QCloseEvent *event)
         event->ignore();
         return;
     }
+    snapshotTimer_->stop();
     event->accept();
+}
+
+void LibraryWindow::clearSnapshotNotice()
+{
+    snapshotLocalProblems_.clear();
+    snapshotDriveProblem_.clear();
+    snapshotNotice_->hide();
+    snapshotNotice_->clear();
+}
+
+void LibraryWindow::refreshSnapshotNotice()
+{
+    // A persistent label only: no transient notifications while the writer is typing.
+    QStringList problems = snapshotLocalProblems_;
+    if (!snapshotDriveProblem_.isEmpty()) {
+        problems << snapshotDriveProblem_;
+    }
+    if (problems.isEmpty()) {
+        snapshotNotice_->hide();
+        snapshotNotice_->clear();
+        return;
+    }
+    snapshotNotice_->setText(problems.join(QStringLiteral(" ")));
+    snapshotNotice_->setToolTip(problems.join(QLatin1Char('\n')));
+    snapshotNotice_->show();
+}
+
+// The optional drive can stall (sleeping disk, unplugged share), so it never runs on the GUI
+// thread. The worker calls only LibrarySnapshots::mirrorLatestToDrive. That reads published
+// local archive folders (the GUI thread may set aside or prune one meanwhile; the copy is
+// verified, so a mid-copy change shows up as a drive error rather than a bad copy) and writes
+// the drive folder. It touches no widget and no window member. Its result is handed back through
+// a queued signal connection to this window, which Qt drops if the window is gone. At most one
+// job runs at a time.
+void LibraryWindow::startDriveMirror()
+{
+    if (driveMirrorBusy_) {
+        return;
+    }
+    const QString library = activeLibraryPath_;
+    if (!LibrarySnapshots::driveConfigured(library)) {
+        snapshotDriveProblem_.clear();
+        refreshSnapshotNotice();
+        return;
+    }
+    driveMirrorBusy_ = true;
+    const auto driveError = std::make_shared<QString>();
+    QThread *worker = QThread::create(
+        [library, driveError] { *driveError = LibrarySnapshots::mirrorLatestToDrive(library); });
+    connect(worker, &QThread::finished, this, [this, library, driveError] {
+        driveMirrorBusy_ = false;
+        if (library != activeLibraryPath_) {
+            return;
+        }
+        if (!driveError->isEmpty()) {
+            qWarning().noquote() << "Snapshot backup drive failed:" << *driveError;
+        }
+        snapshotDriveProblem_ = driveError->isEmpty()
+            ? QString()
+            : QStringLiteral("Backup drive copy failed: %1").arg(*driveError);
+        refreshSnapshotNotice();
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
+}
+
+void LibraryWindow::runDailySnapshot()
+{
+    if (activeLibraryPath_.isEmpty()) {
+        clearSnapshotNotice();
+        return;
+    }
+    if (chapterConflict_ || restoreInProgress_) {
+        return;
+    }
+    // Recovered libraries are inspection copies, not writing Libraries.
+    const QString recoveredBase = QDir(AppPaths::dataDirectory())
+                                      .filePath(QStringLiteral("Recovered Libraries"));
+    if (canonicalOrCleanPath(activeLibraryPath_).startsWith(
+            canonicalOrCleanPath(recoveredBase) + QLatin1Char('/'))) {
+        clearSnapshotNotice();
+        return;
+    }
+    // Quiesce without saving from here: while an edit is pending or a save failed, defer. The
+    // next 10-minute tick takes the snapshot; no short retry timer fires while the writer types.
+    if (chapterDirty_ || saveTimer_->isActive() || saveFailed_) {
+        return;
+    }
+    const LibrarySnapshotResult result = LibrarySnapshots::maybeSnapshotLocal(
+        activeLibraryPath_, QDateTime::currentDateTimeUtc());
+    snapshotLocalProblems_.clear();
+    if (!result.error.isEmpty()) {
+        qWarning().noquote() << "Daily snapshot failed:" << result.error;
+        snapshotLocalProblems_ << QStringLiteral("Daily snapshot failed: %1").arg(result.error);
+    }
+    if (!result.warning.isEmpty()) {
+        snapshotLocalProblems_ << result.warning;
+    }
+    if (!result.invalidSnapshots.isEmpty()) {
+        snapshotLocalProblems_ << QStringLiteral(
+            "%1 snapshot(s) failed verification and were kept for inspection.")
+                                      .arg(result.invalidSnapshots.size());
+    }
+    refreshSnapshotNotice();
+    startDriveMirror();
+}
+
+void LibraryWindow::restoreSnapshot()
+{
+    if (restoreInProgress_) {
+        return;
+    }
+    // Modal dialogs run a nested event loop; keep the daily snapshot (and its pruning) out of it.
+    restoreInProgress_ = true;
+    snapshotTimer_->stop();
+    struct RestoreScope {
+        LibraryWindow *window;
+        ~RestoreScope()
+        {
+            window->restoreInProgress_ = false;
+            window->snapshotTimer_->start();
+        }
+    } restoreScope{this};
+
+    if (chapterConflict_) {
+        QMessageBox::information(
+            this, QStringLiteral("Restore is not available"),
+            QStringLiteral("Resolve the chapter conflict (open the Recovered library from the "
+                           "conflict notice) before restoring a snapshot."));
+        return;
+    }
+    if (activeLibraryPath_.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("No Library open"),
+                                 QStringLiteral("Open a Library before restoring a snapshot."));
+        return;
+    }
+    if (!savePendingEdits()) {
+        QMessageBox::warning(this, QStringLiteral("Restore is not ready"),
+                             QStringLiteral("LEO could not finish saving this chapter. "
+                                            "Resolve the save problem before restoring."));
+        return;
+    }
+    const QList<LibrarySnapshotInfo> snapshots = LibrarySnapshots::listSnapshots(activeLibraryPath_);
+    if (snapshots.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("No snapshots"),
+                                 QStringLiteral("This Library has no verified snapshots yet."));
+        return;
+    }
+    QStringList labels;
+    for (const LibrarySnapshotInfo &snapshot : snapshots) {
+        labels << snapshot.date.toString(QStringLiteral("yyyy-MM-dd"));
+    }
+    bool accepted = false;
+    const QString choice = QInputDialog::getItem(
+        this, QStringLiteral("Restore snapshot"),
+        QStringLiteral("Choose a snapshot. It opens as a separate Recovered library; your current "
+                       "Library is not changed."),
+        labels, 0, false, &accepted);
+    if (!accepted) {
+        return;
+    }
+    const qsizetype index = labels.indexOf(choice);
+    if (index < 0) {
+        return;
+    }
+    QString recoveredPath;
+    QString error;
+    if (!LibrarySnapshots::restoreToRecoveredLibrary(activeLibraryPath_, snapshots.at(index).path,
+                                                     QDateTime::currentDateTimeUtc(),
+                                                     &recoveredPath, &error)) {
+        QMessageBox::warning(this, QStringLiteral("Snapshot not restored"),
+                             QStringLiteral("The snapshot was not restored. Your current Library "
+                                            "is unchanged.\n\n%1").arg(error));
+        return;
+    }
+    const QMessageBox::StandardButton answer = QMessageBox::question(
+        this, QStringLiteral("Recovered library ready"),
+        QStringLiteral("The snapshot from %1 was restored as a separate Recovered library:\n%2\n\n"
+                       "Open it now? Your current Library stays unchanged either way.")
+            .arg(choice, recoveredPath));
+    if (answer == QMessageBox::Yes && savePendingEdits() && openLibrary(recoveredPath)) {
+        statusBar()->showMessage(QStringLiteral(
+            "Restored snapshot is open as a Recovered library. Original Library remains unchanged."));
+    }
 }
 
 void LibraryWindow::chooseLibrary()

@@ -2,6 +2,7 @@
 
 #include "app_paths.h"
 #include "library_reader.h"
+#include "library_snapshot_internal.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -882,7 +883,7 @@ bool scanTree(const QString &root, const QString &relativeDirectory, Manifest *m
             continue;
         }
         if (entry.isSymLink()) {
-            *error = QStringLiteral("Safety snapshot refused symbolic link: %1")
+            *error = QStringLiteral("Snapshot refused symbolic link: %1")
                          .arg(entry.filePath());
             return false;
         }
@@ -917,7 +918,7 @@ bool scanTree(const QString &root, const QString &relativeDirectory, Manifest *m
             }
             manifest->insert(QStringLiteral("F:") + relativePath, fileHash.result().toHex());
         } else {
-            *error = QStringLiteral("Safety snapshot refused special file: %1")
+            *error = QStringLiteral("Snapshot refused special file: %1")
                          .arg(entry.filePath());
             return false;
         }
@@ -1048,7 +1049,9 @@ bool markerIsValid(const QString &markerPath, const QString &libraryRoot)
     return snapshotInfo.isDir() && !snapshotInfo.isSymLink();
 }
 
-bool ensureSafetySnapshot(const QString &libraryRoot, QString *error)
+// Builds and verifies a safety snapshot. Unless forced, an existing valid marker short-circuits.
+bool createSafetySnapshot(const QString &libraryRoot, bool force, QString *snapshotPathOut,
+                          QString *error)
 {
     const QString baseDirectory = snapshotDirectory();
     if (!ensureOutsideLibrary(baseDirectory, libraryRoot, error) ||
@@ -1061,7 +1064,7 @@ bool ensureSafetySnapshot(const QString &libraryRoot, QString *error)
                                     .toHex();
     const QString markerPath = QDir(baseDirectory).filePath(
         QString::fromLatin1(pathHash) + QStringLiteral(".json"));
-    if (markerIsValid(markerPath, libraryRoot)) {
+    if (!force && markerIsValid(markerPath, libraryRoot)) {
         return true;
     }
 
@@ -1159,7 +1162,15 @@ bool ensureSafetySnapshot(const QString &libraryRoot, QString *error)
     if (!atomicReplace(markerPath, markerBytes, 0600, operationId, error)) {
         return false;
     }
+    if (snapshotPathOut) {
+        *snapshotPathOut = finalPath;
+    }
     return true;
+}
+
+bool ensureSafetySnapshot(const QString &libraryRoot, QString *error)
+{
+    return createSafetySnapshot(libraryRoot, false, nullptr, error);
 }
 
 struct ConflictPreservation {
@@ -1169,10 +1180,12 @@ struct ConflictPreservation {
 };
 
 bool copyVerifiedLibrary(const QString &libraryRoot, const QString &destination,
-                         Manifest *sourceManifest, QString *error)
+                         Manifest *sourceManifest, QString *error,
+                         bool includeLocalArtifacts = true,
+                         const std::function<void()> &afterCopy = {})
 {
     Manifest before;
-    if (!scanTree(libraryRoot, QString(), &before, error, true)) {
+    if (!scanTree(libraryRoot, QString(), &before, error, includeLocalArtifacts)) {
         return false;
     }
     if (!QDir().mkpath(destination) ||
@@ -1198,9 +1211,12 @@ bool copyVerifiedLibrary(const QString &libraryRoot, const QString &destination,
         }
     }
 
+    if (copied && afterCopy) {
+        afterCopy();
+    }
     Manifest afterSource;
     Manifest copy;
-    if (copied && !scanTree(libraryRoot, QString(), &afterSource, error, true)) {
+    if (copied && !scanTree(libraryRoot, QString(), &afterSource, error, includeLocalArtifacts)) {
         copied = false;
     }
     if (copied && !scanTree(destination, QString(), &copy, error, true)) {
@@ -1627,6 +1643,69 @@ PersistenceResult recoverPendingSavesInternal(
     result.ok = true;
     result.recovered = recovered;
     return result;
+}
+
+}
+
+namespace LibrarySnapshotInternal {
+
+bool scanTree(const QString &root, Manifest *manifest, QString *error,
+              bool includeLocalArtifacts)
+{
+    return ::scanTree(root, QString(), manifest, error, includeLocalArtifacts);
+}
+
+QByteArray manifestHash(const Manifest &manifest)
+{
+    return ::manifestHash(manifest);
+}
+
+bool copyVerifiedTree(const QString &root, const QString &destination, Manifest *sourceManifest,
+                      QString *error, bool includeLocalArtifacts,
+                      const std::function<void()> &afterCopy)
+{
+    return ::copyVerifiedLibrary(root, destination, sourceManifest, error,
+                                 includeLocalArtifacts, afterCopy);
+}
+
+bool createSafetySnapshot(const QString &libraryRoot, QString *snapshotPath, QString *error)
+{
+    return ::createSafetySnapshot(libraryRoot, true, snapshotPath, error);
+}
+
+bool ensureOutsideLibrary(const QString &path, const QString &libraryRoot, QString *error)
+{
+    return ::ensureOutsideLibrary(path, libraryRoot, error);
+}
+
+bool ensurePrivateDirectory(const QString &path, QString *error)
+{
+    return ::ensurePrivateDirectory(path, error);
+}
+
+bool syncDirectory(const QString &path, QString *error)
+{
+    return ::syncDirectory(path, error);
+}
+
+bool writeFileAtomic(const QString &path, const QByteArray &bytes, QString *error)
+{
+    return ::atomicReplace(path, bytes, 0600, ::newOperationId(), error);
+}
+
+QString newOperationId()
+{
+    return ::newOperationId();
+}
+
+QString canonicalDirectory(const QString &path)
+{
+    return ::canonicalDirectory(path);
+}
+
+bool isWithin(const QString &parent, const QString &child)
+{
+    return ::isWithin(parent, child);
 }
 
 }
